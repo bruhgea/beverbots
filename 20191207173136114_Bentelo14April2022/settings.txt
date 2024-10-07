@@ -1,0 +1,3 @@
+GPR settings
+Depth	Type of soil	
+50	Dry Sand	
