@@ -1,42 +1,23 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import segyio
+import matplotlib
+matplotlib.use('Qt5Agg')
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
 from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
-
-# # Get access to data
-# from google.colab import drive
-# drive.mount('/content/drive')
-
-# seismic_data = segyio.tools.cube('20191207173136114_Bentelo14April2022/20191207173136114_Bentelo14April2022.sgy')
-#
-# print('Survey Inline/Xline shape:' +str(np.shape(seismic_data)[0])+' / ' +str(np.shape(seismic_data)[1]))
-#
-# fig = plt.figure(figsize=(18,9))
-# ax = fig.add_subplot(121)
-# sim =ax.imshow(seismic_data[:,120,:],cmap='gray');
-# fig.colorbar(sim,ax=ax)
-# ax.set_xticks([])
-# ax.set_yticks([])
-# ax.invert_xaxis()
-#
-# fig = plt.figure(figsize=(18,9))
-# ax = fig.add_subplot(121)
-# sim =ax.imshow(seismic_data[:,120,:].T,cmap='gray');
-# fig.colorbar(sim,ax=ax)
-# ax.set_xticks([])
-# ax.set_yticks([])
-# ax.invert_xaxis()
-
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox
+from PyQt5.QtGui import QPainter, QPen, QColor
+from PyQt5.QtCore import Qt, QPointF
 from obspy.io.segy.segy import SEGYFile
-import numpy as np
 import matplotlib.pyplot as plt
 from obspy.io.segy.segy import SEGYFile
 from obspy import read
 from scipy.signal import butter, filtfilt
+import sys
 
-file_path = '20240625132506554_TestGraaf22.25.sgy'
+#file_path = '20240625132506554_TestGraaf22.25.sgy'
 
 # Filtering functions
 def butter_lowpass(cutoff, fs, order=5):
@@ -78,6 +59,113 @@ def apply_filter(data, filter_type, cutoff_freqs, fs, order=5):
 def moving_average(data, window_size):
     return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
 
+
+class MplCanvas(FigureCanvasQTAgg):
+    '''
+    separate obj for matplotlib.figure
+    '''
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MplCanvas, self).__init__(fig)
+
+
+
+class MainWindow(QMainWindow):
+    '''
+    Main window
+    '''
+    def __init__(self, *args, **kwargs):
+        super(MainWindow, self).__init__(*args, **kwargs)
+        self.init_ui()
+        self.file_path = str()
+
+    def init_ui(self):
+        self.setWindowTitle('GPR plotter')
+        self.setGeometry(100, 100, 800, 600)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        layout = QVBoxLayout()
+
+        #   button to open file
+        self.file_btn = QPushButton("Open .sgy file")
+        self.file_btn.clicked.connect(self.file_btn_clicked)
+
+        #   button to apply filter
+        self.filter_btn = QPushButton("Apply filter")
+        self.filter_btn.clicked.connect(self.filter_btn_clicked)
+
+        #   dropdown menu to select filter
+        self.filter_box = QComboBox()
+        self.filter_box.addItems(['None', 'Low-pass', 'High-pass', 'Band-pass'])
+
+        #   matplotlib FigureCanvas obj
+        self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
+
+        #   add all widgets
+        layout.addWidget(self.file_btn)
+        layout.addWidget(self.filter_box)
+        layout.addWidget(self.filter_btn)
+        layout.addWidget(self.mpl_canvas)
+        self.central_widget.setLayout(layout)
+    
+    #   button handlers
+    def file_btn_clicked(self):
+        '''
+        Open .sgy file and plot
+        '''
+        self.file_path = QFileDialog.getOpenFileName(self, 'Open file', '', '*.sgy')[0]
+        print(f'opened file {self.file_path}')
+        try:
+            # Read the SEGY file using ObsPy
+            segy_stream = read(self.file_path, format="SEGY")
+
+            # Get the number of traces and the number of samples per trace
+            num_traces = len(segy_stream)
+            num_samples = len(segy_stream[0].data)
+
+            # Print some basic info about the traces
+            print(f"Number of traces: {num_traces}")
+            print(f"Sample points per trace: {num_samples}")
+
+            # Create a 2D numpy array to hold all trace data
+            seismic_data = np.zeros((num_samples, num_traces))
+
+            # Fill the array with trace data
+            for i, trace in enumerate(segy_stream):
+                seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
+
+            # Create the time axis (assuming uniform sample interval)
+            sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
+            time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
+
+            # Plot the radargram
+            self.mpl_canvas.axes.imshow(seismic_data, aspect='auto', cmap='seismic', extent=[0, num_traces, time_axis[-1], time_axis[0]])
+            #self.mpl_canvas.axes.colorbar(label="Amplitude")
+            self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
+            self.mpl_canvas.axes.set_xlabel("Trace number")
+            self.mpl_canvas.axes.set_ylabel("Time (s)")
+
+            #   refresh canvas
+            self.mpl_canvas.draw()
+
+        except Exception as e:
+            print(f"Error opening SEGY file with ObsPy: {e}")
+        
+    def filter_btn_clicked(self):
+        pass    # TODO
+
+
+def main():
+    app = QApplication(sys.argv)
+    plotter = MainWindow()
+    plotter.show()
+    sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    main()
+
+'''
 # Open the SEGY file using ObsPy
 try:
     # Read the SEGY file using ObsPy
@@ -147,74 +235,6 @@ try:
     plt.grid(True)
     plt.show()
 
-
-    # # Plot the first trace
-    # #segy_stream[0].plot()
-    #
-    # segy_stream.filter("lowpass", freq=0.1, corners=2)
-    # segy_stream.plot(type='dayplot', interval=60, right_vertical_labels=False,
-    #                  vertical_scaling_range=1, one_tick_per_line=True, color=['k', 'r', 'b', 'g'],
-    #                  show_y_UTC_label=False, events={'text': 'text', 'color': 'r', 'linestyle': '-.'})
-    # # print array of data
-    # print(segy_stream[0].data)
-    #
-    # # Read metadata
-    # for trace in segy_stream:
-    #     print(trace.stats)
-    #
-    # # Get the number of traces and the number of samples per trace
-    # num_traces = len(segy_stream)
-    # num_samples = len(segy_stream[0].data)
-    #
-    # # Create a time axis (assuming uniform sample interval)
-    # sample_interval = segy_stream[0].stats.delta  # Sample interval (in seconds)
-    # time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
-    #
-    # # Plot all traces
-    # plt.figure(figsize=(12, 6))
-    #
-    # for i, trace in enumerate(segy_stream):
-    #     # Offset each trace for clarity in the plot (e.g., offset by i * constant)
-    #     plt.plot(time_axis, trace.data + i * 1000, label=f'Trace {i + 1}')
-    #
-    # plt.title('All Traces from SEGY File')
-    # plt.xlabel('Time (s)')
-    # plt.ylabel('Amplitude (offset for clarity)')
-    # plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1))
-    # plt.show()
-
-    # # Read the SEGY file using ObsPy
-    # segy_stream = read(file_path, format="SEGY")
-    #
-    # # Get the number of traces and the number of samples per trace
-    # num_traces = len(segy_stream)
-    # num_samples = len(segy_stream[0].data)
-    #
-    # # Create a time axis (assuming uniform sample interval)
-    # sample_interval = segy_stream[0].stats.delta  # Sample interval (in seconds)
-    # time_axis = [sample_interval * i for i in range(num_samples)]
-    #
-    # # Plot all traces
-    # plt.figure(figsize=(12, 6))
-    #
-    # for i, trace in enumerate(segy_stream):
-    #     # Offset each trace for clarity in the plot (e.g., offset by i * constant)
-    #     plt.plot(time_axis, trace.data + i * 1000, label=f'Trace {i + 1}')
-    #
-    # plt.title('All Traces from SEGY File')
-    # plt.xlabel('Time (s)')
-    # plt.ylabel('Amplitude (offset for clarity)')
-    # plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1))
-    # plt.show()
-
-
 except Exception as e:
     print(f"Error opening SEGY file with ObsPy: {e}")
-
-# import matplotlib.pyplot as plt
-# import pathlib
-#
-# V3D_path = pathlib.Path("data/volve10r12-full-twt-sub3d.sgy")
-# print("3D", V3D_path, V3D_path.exists())
-
-# x <- readGPR(dsn = "20191207173136114_Bentelo14April2022/20191207173136114_Bentelo14April2022.sgy")
+'''
