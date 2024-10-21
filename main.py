@@ -10,12 +10,15 @@ from skimage import exposure
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from obspy.io.segy.segy import SEGYFile
 import matplotlib.pyplot as plt
 from obspy.io.segy.segy import SEGYFile
 from obspy import read
 from scipy.signal import butter, filtfilt
 import sys
+
+from matplotlib.backend_bases import MouseButton
 
 #file_path = '20240625132506554_TestGraaf22.25.sgy'
 
@@ -59,17 +62,64 @@ def apply_filter(data, filter_type, cutoff_freqs, fs, order=5):
 def moving_average(data, window_size):
     return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
 
+class GprParser():
+    '''
+    class to store GPR data read from file
+    '''
+    def __init__(self, file_path : str):
+        self.segy_stream = None
+        try:
+            self.segy_stream = read(file_path, format='SEGY')
+        except Exception as e:
+            print(f"Error opening SEGY file with ObsPy: {e}")
+        
+        self.traces_num = len(self.segy_stream)
+        self.samples_num = len(self.segy_stream[0].data)
+        #   2D numpy array to hold all trace data
+        self.seismic_data = np.zeros((self.samples_num, self.traces_num))
+        # Fill the array with trace data
+        for i, trace in enumerate(self.segy_stream):
+            self.seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
+        
+        # Create the time axis (assuming uniform sample interval)
+        sample_interval = self.segy_stream[0].stats.delta  # Sample interval in seconds
+        self.time_axis = np.arange(0, self.samples_num * sample_interval, sample_interval)
+
 
 class MplCanvas(FigureCanvasQTAgg):
     '''
-    separate obj for matplotlib.figure
+    separate obj for plot widget
     '''
     def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.parent = parent
         fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = fig.add_subplot(111)
+        #   vertical line to show up when clicked on trace
+        self.vertical_line = None
+        #   connect event handlers
+        fig.canvas.mpl_connect('button_press_event', self._on_left_click)
         super(MplCanvas, self).__init__(fig)
 
-
+    #   click event handler (show vertical line)
+    def _on_left_click(self, event):
+        #   ignore if clicked outside graph
+        if event.inaxes != self.axes:
+            return
+        #   ignore if no file parsed at moment
+        if self.parent.parser == None:
+            return
+        #   show only integer traces num
+        trace_number = int(round(event.xdata))
+        #   ignore if outside of range
+        if trace_number < 0 or trace_number >= self.parent.parser.traces_num:
+            return
+        #   remove prev line
+        if self.vertical_line:
+            self.vertical_line.remove()
+        
+        self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
+        self.draw()
+        self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
 
 class MainWindow(QMainWindow):
     '''
@@ -79,6 +129,7 @@ class MainWindow(QMainWindow):
         super(MainWindow, self).__init__(*args, **kwargs)
         self.init_ui()
         self.file_path = str()
+        self.parser = None
 
     def init_ui(self):
         self.setWindowTitle('GPR plotter')
@@ -102,11 +153,15 @@ class MainWindow(QMainWindow):
         #   matplotlib FigureCanvas obj
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
 
+        #   graph toolbar
+        self.mpl_toolbar = NavigationToolbar(self.mpl_canvas, self)
+
         #   add all widgets
+        layout.addWidget(self.mpl_toolbar)
+        layout.addWidget(self.mpl_canvas)
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
         layout.addWidget(self.filter_btn)
-        layout.addWidget(self.mpl_canvas)
         self.central_widget.setLayout(layout)
     
     #   button handlers
@@ -114,47 +169,25 @@ class MainWindow(QMainWindow):
         '''
         Open .sgy file and plot
         '''
+        print('file_btn_clicked event triggered!')
         self.file_path = QFileDialog.getOpenFileName(self, 'Open file', '', '*.sgy')[0]
+        if (len(self.file_path) == 0):
+            return
         print(f'opened file {self.file_path}')
-        try:
-            # Read the SEGY file using ObsPy
-            segy_stream = read(self.file_path, format="SEGY")
-
-            # Get the number of traces and the number of samples per trace
-            num_traces = len(segy_stream)
-            num_samples = len(segy_stream[0].data)
-
-            # Print some basic info about the traces
-            print(f"Number of traces: {num_traces}")
-            print(f"Sample points per trace: {num_samples}")
-
-            # Create a 2D numpy array to hold all trace data
-            seismic_data = np.zeros((num_samples, num_traces))
-
-            # Fill the array with trace data
-            for i, trace in enumerate(segy_stream):
-                seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
-
-            # Create the time axis (assuming uniform sample interval)
-            sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
-            time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
-
-            # Plot the radargram
-            self.mpl_canvas.axes.imshow(seismic_data, aspect='auto', cmap='seismic', extent=[0, num_traces, time_axis[-1], time_axis[0]])
-            #self.mpl_canvas.axes.colorbar(label="Amplitude")
-            self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
-            self.mpl_canvas.axes.set_xlabel("Trace number")
-            self.mpl_canvas.axes.set_ylabel("Time (s)")
-
-            #   refresh canvas
-            self.mpl_canvas.draw()
-
-        except Exception as e:
-            print(f"Error opening SEGY file with ObsPy: {e}")
-        
+        #   init Gpr parser
+        self.parser = GprParser(self.file_path)
+        # Plot the radargram
+        self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
+        #self.mpl_canvas.axes.colorbar(label="Amplitude")
+        self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
+        self.mpl_canvas.axes.set_xlabel("Trace number")
+        self.mpl_canvas.axes.set_ylabel("Time (s)")            
+        #   refresh canvas
+        self.mpl_canvas.draw()
+       
     def filter_btn_clicked(self):
         pass    # TODO
-
+    
 
 def main():
     app = QApplication(sys.argv)
@@ -164,77 +197,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-'''
-# Open the SEGY file using ObsPy
-try:
-    # Read the SEGY file using ObsPy
-    segy_stream = read(file_path, format="SEGY")
-
-    # Get the number of traces and the number of samples per trace
-    num_traces = len(segy_stream)
-    num_samples = len(segy_stream[0].data)
-
-    # Print some basic info about the traces
-    print(f"Number of traces: {num_traces}")
-    print(f"Sample points per trace: {num_samples}")
-
-    # Create a 2D numpy array to hold all trace data
-    seismic_data = np.zeros((num_samples, num_traces))
-
-    # Fill the array with trace data
-    for i, trace in enumerate(segy_stream):
-        seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
-
-    # Create the time axis (assuming uniform sample interval)
-    sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
-    time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
-
-    # Plot the radargram
-    plt.figure(figsize=(10, 6))
-    plt.imshow(seismic_data, aspect='auto', cmap='seismic', extent=[0, num_traces, time_axis[-1], time_axis[0]])
-    plt.colorbar(label="Amplitude")
-    plt.title("Radargram (Seismic Section)")
-    plt.xlabel("Trace number")
-    plt.ylabel("Time (s)")
-    plt.show()
-
-    # Graphic
-
-    # Create a single array to hold the continuous time series data (all traces concatenated)
-    continuous_data = np.concatenate([trace.data for trace in segy_stream])
-
-    # Create a time axis for the entire continuous plot
-    sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
-    total_time = num_samples * num_traces * sample_interval
-    time_axis = np.linspace(0, total_time, num_samples * num_traces)
-
-    fs = 1 / sample_interval
-    filter_type = 'lowpass' # Choose from 'lowpass', 'highpass', or 'bandpass'
-    cutoff_freqs = [0.1]  # Cutoff frequency (Hz) for the filter
-
-    filtered_data = apply_filter(continuous_data, filter_type, cutoff_freqs, fs, order=5)
-
-    # Apply moving average filter (optional)
-    # Uncomment to apply moving average
-    window_size = 100  # Window size for the moving average
-    filtered_data = moving_average(filtered_data, window_size)
-
-    # Plot the continuous line for all traces
-    plt.figure(figsize=(12, 6))
-    # Plot original data
-    plt.plot(time_axis, continuous_data, color='gray', alpha=0.5, label="Original Data")
-
-    # Plot filtered data
-    plt.plot(time_axis[:len(filtered_data)], filtered_data, color='k', label=f"Filtered Data ({filter_type})")
-
-    plt.title("All Seismic Traces with Filtering")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend(loc='upper right')
-    plt.grid(True)
-    plt.show()
-
-except Exception as e:
-    print(f"Error opening SEGY file with ObsPy: {e}")
-'''
