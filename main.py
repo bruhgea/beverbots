@@ -3,6 +3,7 @@ import matplotlib
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.ticker import ScalarFormatter
 
 from scipy import ndimage as ndi
 from shutil import copyfile
@@ -13,13 +14,12 @@ from PyQt5.QtCore import Qt, QPointF
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from obspy.io.segy.segy import SEGYFile
 import matplotlib.pyplot as plt
-from obspy.io.segy.segy import SEGYFile
 from obspy import read
 from scipy.signal import butter, filtfilt
 import sys
 import struct
 
-from matplotlib.backend_bases import MouseButton
+
 
 #file_path = '20240625132506554_TestGraaf22.25.sgy'
 
@@ -145,6 +145,18 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.set_xlabel('Longtitude X')
         self.axes.set_ylabel('Latitude Y')
         self.axes.set_title('GPS coordinates')
+        self.axes.set_xlim([lonX.min(), lonX.max()])
+        self.axes.set_ylim([latY.min(), latY.max()])
+        self.axes.set_aspect('equal')
+
+        #   force full numbers on axes
+        self.axes.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        self.axes.yaxis.get_major_formatter().set_scientific(False)
+        self.axes.yaxis.get_major_formatter().set_useOffset(False)
+        self.axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        self.axes.xaxis.get_major_formatter().set_scientific(False)
+        self.axes.xaxis.get_major_formatter().set_useOffset(False)
+
         self.draw()
 
 
