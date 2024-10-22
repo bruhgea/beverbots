@@ -17,6 +17,7 @@ from obspy.io.segy.segy import SEGYFile
 from obspy import read
 from scipy.signal import butter, filtfilt
 import sys
+import struct
 
 from matplotlib.backend_bases import MouseButton
 
@@ -77,9 +78,16 @@ class GprParser():
         self.samples_num = len(self.segy_stream[0].data)
         #   2D numpy array to hold all trace data
         self.seismic_data = np.zeros((self.samples_num, self.traces_num))
-        # Fill the array with trace data
+        #   2D numpy array to hold X - Y coordinates per trace. indices correspond to traces in self.seismic_data
+        self.trace_coordinates = np.zeros((2, self.traces_num), dtype=float)
+        # Fill the array with trace data and coordinates
         for i, trace in enumerate(self.segy_stream):
             self.seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
+            #   coordinates are extracted wrongly by library, so have to do it manually
+            bin_header = trace.stats.segy['trace_header']['unpacked_header']
+            lonX = struct.unpack('<f', bin_header[72:76])[0]
+            latY = struct.unpack('<f', bin_header[76:80])[0]
+            self.trace_coordinates[:, i] = (lonX, latY)
         
         # Create the time axis (assuming uniform sample interval)
         sample_interval = self.segy_stream[0].stats.delta  # Sample interval in seconds
@@ -121,6 +129,25 @@ class MplCanvas(FigureCanvasQTAgg):
         self.draw()
         self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
 
+class MplGpsCanvas(FigureCanvasQTAgg):
+    '''
+    coordinates widget
+    '''
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.parent = parent
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MplGpsCanvas, self).__init__(fig)
+
+    def plot_coordinates(self, lonX, latY):
+        self.axes.clear()
+        self.axes.scatter(lonX, latY, c='red', marker='+')
+        self.axes.set_xlabel('Longtitude X')
+        self.axes.set_ylabel('Latitude Y')
+        self.axes.set_title('GPS coordinates')
+        self.draw()
+
+
 class MainWindow(QMainWindow):
     '''
     Main window
@@ -150,8 +177,11 @@ class MainWindow(QMainWindow):
         self.filter_box = QComboBox()
         self.filter_box.addItems(['None', 'Low-pass', 'High-pass', 'Band-pass'])
 
-        #   matplotlib FigureCanvas obj
+        #   matplotlib FigureCanvas obj for seismic plot
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
+
+        #   matplotlib FigureCanvas obj for GPS coordinates plot
+        self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
         #   graph toolbar
         self.mpl_toolbar = NavigationToolbar(self.mpl_canvas, self)
@@ -159,6 +189,7 @@ class MainWindow(QMainWindow):
         #   add all widgets
         layout.addWidget(self.mpl_toolbar)
         layout.addWidget(self.mpl_canvas)
+        layout.addWidget(self.mpl_gps_canvas)
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
         layout.addWidget(self.filter_btn)
@@ -184,6 +215,10 @@ class MainWindow(QMainWindow):
         self.mpl_canvas.axes.set_ylabel("Time (s)")            
         #   refresh canvas
         self.mpl_canvas.draw()
+
+        # Plot GPS coordinates
+        lonX, latY = self.parser.trace_coordinates
+        self.mpl_gps_canvas.plot_coordinates(lonX, latY)
        
     def filter_btn_clicked(self):
         pass    # TODO
