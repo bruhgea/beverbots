@@ -9,7 +9,7 @@ from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
-    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox
+    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
 from obspy.io.segy.segy import SEGYFile
@@ -18,6 +18,8 @@ from obspy.io.segy.segy import SEGYFile
 from obspy import read
 from scipy.signal import butter, filtfilt
 import sys
+from scipy.signal import butter, lfilter  # Use lfilter instead of filtfilt
+from PyQt5.QtWidgets import QLineEdit
 
 file_path = '20240625132506554_TestGraaf22.25.sgy'
 
@@ -44,7 +46,6 @@ def butter_bandpass(lowcut, highcut, fs, order=5):
     b, a = butter(order, [low, high], btype='bandpass')
     return b, a
 
-from scipy.signal import butter, lfilter  # Use lfilter instead of filtfilt
 
 def apply_filter(data, filter_type, cutoff_freqs, fs, order=5):
     if filter_type == 'lowpass':
@@ -52,34 +53,60 @@ def apply_filter(data, filter_type, cutoff_freqs, fs, order=5):
     elif filter_type == 'highpass':
         b, a = butter_highpass(cutoff_freqs[0], fs, order=order)
     elif filter_type == 'bandpass':
+        if len(cutoff_freqs) != 2 or cutoff_freqs[0] >= cutoff_freqs[1]:
+            raise ValueError("For bandpass filter, cutoff_freqs should contain two values: [lowcut, highcut]")
         b, a = butter_bandpass(cutoff_freqs[0], cutoff_freqs[1], fs, order=order)
+    elif filter_type == 'moving_average':
+        return moving_average(data, order)  # window size is `order`
     else:
         raise ValueError("Unknown filter type. Choose from 'lowpass', 'highpass', or 'bandpass'.")
 
-    # Apply the filter trace by trace in chunks
-    try:
-        filtered_data = lfilter(b, a, data)
-    except Exception as e:
-        print(f"Error during filtering: {e}")
-        return None
+    # Apply the filter
+    filtered_data = filtfilt(b, a, data)
+
+    # Adjust length to match original data
+    if len(filtered_data) > len(data):
+        filtered_data = filtered_data[:len(data)]
+    elif len(filtered_data) < len(data):
+        filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)), mode='constant')
 
     return filtered_data
 
 
 def moving_average(data, window_size):
-    return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+    if len(data) < window_size:
+        raise ValueError("Window size must be less than or equal to the length of the data.")
+    return np.convolve(data, np.ones(window_size) / window_size, mode='same')
 
 
-def filter_in_chunks(seismic_data, filter_type, cutoff_freqs, fs, chunk_size=500):
+def filter_in_chunks(seismic_data, filter_type, cutoff_freqs, fs, order=5, chunk_size=100):
     num_traces = seismic_data.shape[1]
     filtered_seismic_data = np.zeros_like(seismic_data)
 
     for i in range(0, num_traces, chunk_size):
         end = min(i + chunk_size, num_traces)
         for j in range(i, end):
-            filtered_seismic_data[:, j] = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs)
+            try:
+                filtered_trace = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs, order)
+                if filtered_trace.shape[0] != seismic_data.shape[0]:
+                    print(f"Warning: Trace {j} shape mismatch after filtering. Adjusting shape.")
+                filtered_seismic_data[:, j] = filtered_trace[:seismic_data.shape[0]]  # Match length
+            except Exception as e:
+                print(f"Error filtering trace {j}: {e}")
 
     return filtered_seismic_data
+
+
+# def filter_in_chunks(seismic_data, filter_type, cutoff_freqs, fs, chunk_size=500):
+#     num_traces = seismic_data.shape[1]
+#     filtered_seismic_data = np.zeros_like(seismic_data)
+#
+#     for i in range(0, num_traces, chunk_size):
+#         end = min(i + chunk_size, num_traces)
+#         for j in range(i, end):
+#             filtered_seismic_data[:, j] = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs)
+#
+#     return filtered_seismic_data
 
 
 class MplCanvas(FigureCanvasQTAgg):
@@ -92,24 +119,6 @@ class MplCanvas(FigureCanvasQTAgg):
         self.axes = fig.add_subplot(111)
         super(MplCanvas, self).__init__(fig)
 
-from PyQt5.QtCore import QThread, pyqtSignal
-
-
-# class FilterThread(QThread):
-#     finished = pyqtSignal(np.ndarray)  # Signal to send the filtered data back
-#
-#     def __init__(self, seismic_data, filter_type, cutoff_freqs, fs):
-#         super().__init__()
-#         self.seismic_data = seismic_data
-#         self.filter_type = filter_type
-#         self.cutoff_freqs = cutoff_freqs
-#         self.fs = fs
-#
-#     def run(self):
-#         filtered_data = np.zeros_like(self.seismic_data)
-#         for i in range(self.seismic_data.shape[1]):
-#             filtered_data[:, i] = apply_filter(self.seismic_data[:, i], self.filter_type, self.cutoff_freqs, self.fs)
-#         self.finished.emit(filtered_data)
 
 class MainWindow(QMainWindow):
     '''
@@ -122,8 +131,11 @@ class MainWindow(QMainWindow):
         self.file_path = str()
         self.seismic_data = None  # Store seismic data here for filtering
         self.fs = None  # Store sampling rate
+        self.cutoff_freqs = [50]  # Default cutoff frequency
+        self.order = 5  # Default filter order
 
     def init_ui(self):
+
         self.setWindowTitle('GPR plotter')
         self.setGeometry(100, 100, 800, 600)
         self.central_widget = QWidget()
@@ -138,21 +150,57 @@ class MainWindow(QMainWindow):
         self.filter_btn = QPushButton("Apply filter")
         self.filter_btn.clicked.connect(self.filter_btn_clicked)
 
-        #   dropdown menu to select filter
+        # Dropdown menu to select filter
         self.filter_box = QComboBox()
-        self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass'])
+        self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average'])
+        self.filter_box.currentTextChanged.connect(self.on_filter_change)
 
-        #   matplotlib FigureCanvas obj
+        # Input fields for cutoff frequencies
+        self.cutoff_input_low = QLineEdit()
+        self.cutoff_input_low.setPlaceholderText("Cutoff Frequency (Low)")
+        self.cutoff_input_low.setText("50")  # Default value
+
+        self.cutoff_input_high = QLineEdit()
+        self.cutoff_input_high.setPlaceholderText("Cutoff Frequency (High)")
+        self.cutoff_input_high.setVisible(False)  # Hide initially
+
+        # Order spinbox
+        self.order_spinbox = QSpinBox()
+        self.order_spinbox.setRange(1, 10)  # Adjust as needed
+        self.order_spinbox.setValue(5)
+        self.order_spinbox.valueChanged.connect(self.update_order)
+
+        # Filter control layout
+        cutoff_label_low = QLabel("Cutoff Frequency (Low):")
+        cutoff_label_high = QLabel("Cutoff Frequency (High):")
+        order_label = QLabel("Filter Order:")
+
+        controls_layout = QHBoxLayout()
+        controls_layout.addWidget(cutoff_label_low)
+        controls_layout.addWidget(self.cutoff_input_low)
+        controls_layout.addWidget(cutoff_label_high)
+        controls_layout.addWidget(self.cutoff_input_high)
+        controls_layout.addWidget(order_label)
+        controls_layout.addWidget(self.order_spinbox)
+
+        # Matplotlib FigureCanvas object
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
 
-        #   add all widgets
+        # Add all widgets to the layout
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
         layout.addWidget(self.filter_btn)
+        layout.addLayout(controls_layout)
         layout.addWidget(self.mpl_canvas)
         self.central_widget.setLayout(layout)
 
-    #   button handlers
+    def on_filter_change(self, text):
+        # Show/hide the high cutoff input based on the selected filter
+        if text == 'bandpass':
+            self.cutoff_input_high.setVisible(True)
+        else:
+            self.cutoff_input_high.setVisible(False)  # button handlers
+
     def file_btn_clicked(self):
         '''
         Open .sgy file and plot
@@ -182,25 +230,12 @@ class MainWindow(QMainWindow):
             sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
             self.fs = 1 / sample_interval  # Sampling rate (Hz)
 
-            #time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
-
             # Debug: Confirm seismic_data is correctly loaded
             print(f"Seismic data loaded: {self.seismic_data.shape}")
             print(f"Sampling rate (fs): {self.fs}")
 
             # Plot the original radargram
             self.plot_radargram(self.seismic_data, "Radargram (Seismic Section)")
-
-            # # Plot the radargram
-            # self.mpl_canvas.axes.imshow(seismic_data, aspect='auto', cmap='seismic',
-            #                             extent=[0, num_traces, time_axis[-1], time_axis[0]])
-            # # self.mpl_canvas.axes.colorbar(label="Amplitude")
-            # self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
-            # self.mpl_canvas.axes.set_xlabel("Trace number")
-            # self.mpl_canvas.axes.set_ylabel("Time (s)")
-            #
-            # #   refresh canvas
-            # self.mpl_canvas.draw()
 
         except Exception as e:
             print(f"Error opening SEGY file with ObsPy: {e}")
@@ -216,6 +251,32 @@ class MainWindow(QMainWindow):
         self.mpl_canvas.axes.set_ylabel("Time (s)")
         self.mpl_canvas.draw()
 
+    # def update_cutoff(self):
+    #     self.cutoff_freqs = [self.cutoff_slider.value()]
+
+    def update_order(self):
+        self.order = self.order_spinbox.value()
+
+    # def filter_in_chunks(seismic_data, filter_type, cutoff_freqs, fs, order=5, chunk_size=500):
+    #     num_traces = seismic_data.shape[1]
+    #     filtered_seismic_data = np.zeros_like(seismic_data)
+    #
+    #     for i in range(0, num_traces, chunk_size):
+    #         end = min(i + chunk_size, num_traces)
+    #         for j in range(i, end):
+    #             filtered_seismic_data[:, j] = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs,
+    #                                                        order=order)
+    #
+    #     return filtered_seismic_data
+
+    def moving_average(self, data, window_size):
+        """
+        Apply a moving average filter to the input data.
+        """
+        if len(data) < window_size:
+            raise ValueError("Window size must be less than or equal to the length of the data.")
+        return np.convolve(data, np.ones(window_size) / window_size, mode='same')
+
     def filter_btn_clicked(self):
         '''
         Apply the selected filter to the data and re-plot
@@ -227,36 +288,73 @@ class MainWindow(QMainWindow):
             print(f"Data ready for filtering. Shape: {self.seismic_data.shape}, fs: {self.fs}")
 
         filter_type = self.filter_box.currentText().lower()
-        cutoff_freqs = [50]  # Default cutoff frequency
+
+        # Get cutoff frequencies from input boxes
+        low_cutoff = float(self.cutoff_input_low.text())
+        high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
+
+        # cutoff_freqs = self.cutoff_freqs
+        # order = self.order
+        # cutoff_freqs = [50]  # Default cutoff frequency
+        # cutoff_freqs = self.cutoff_freqs if hasattr(self, 'cutoff_freqs') else [50]
+        # order = self.order if hasattr(self, 'order') else 5
 
         if filter_type == 'none':
             print("No filter selected")
             self.plot_radargram(self.seismic_data, "Radargram (Original Data)")
             return
 
-        elif filter_type == 'lowpass':
-            cutoff_freqs = [50]  # Set low-pass cutoff frequency, adjust as needed
-        elif filter_type == 'highpass':
-            cutoff_freqs = [10]  # Set high-pass cutoff frequency, adjust as needed
-        elif filter_type == 'bandpass':
-            cutoff_freqs = [10, 50]  # Set band-pass frequency range, adjust as needed
+        if filter_type == 'bandpass':
+            if high_cutoff is None:
+                print("Please set both lowcut and highcut frequencies for the bandpass filter.")
+                return
+            cutoff_freqs = [low_cutoff, high_cutoff]
+        else:
+            cutoff_freqs = [low_cutoff]
 
-        # Apply filter in chunks, 100 traces at a time
-        filtered_seismic_data = np.zeros_like(self.seismic_data)
-        chunk_size = 100  # Process 100 traces at a time
+        # Apply the filter
+        if filter_type == 'moving_average':
+            window_size = self.order  # Use order as the window size for moving average
+            filtered_seismic_data = np.apply_along_axis(
+                lambda trace: self.moving_average(trace, window_size),
+                axis=0, arr=self.seismic_data
+            )
+        else:
+            filtered_seismic_data = np.apply_along_axis(
+                lambda trace: apply_filter(trace, filter_type, cutoff_freqs, self.fs, self.order),
+                axis=0, arr=self.seismic_data
+            )
 
-        try:
-            for start in range(0, self.seismic_data.shape[1], chunk_size):
-                end = min(start + chunk_size, self.seismic_data.shape[1])
-                for i in range(start, end):
-                    filtered_seismic_data[:, i] = apply_filter(self.seismic_data[:, i], filter_type, cutoff_freqs,
-                                                               self.fs)
+        self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
 
-            # Re-plot the filtered radargram
-            self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
+        # elif filter_type == 'lowpass':
+        #     cutoff_freqs = [50]  # Set low-pass cutoff frequency, adjust as needed
+        # elif filter_type == 'highpass':
+        #     cutoff_freqs = [10]  # Set high-pass cutoff frequency, adjust as needed
+        # elif filter_type == 'bandpass':
+        #     cutoff_freqs = [10, 50]  # Set band-pass frequency range, adjust as needed
+        # elif filter_type == 'moving_average':
+        #     order = self.order if hasattr(self, 'order') else 10  # For moving average, 'order' is the window size
 
-        except Exception as e:
-            print(f"Error during filtering: {e}")
+        # Apply filter in chunks
+        # filtered_seismic_data = filter_in_chunks(self.seismic_data, filter_type, cutoff_freqs, self.fs, order=order)
+
+        # # Apply filter in chunks, 100 traces at a time
+        # filtered_seismic_data = np.zeros_like(self.seismic_data)
+        # chunk_size = 100  # Process 100 traces at a time
+        #
+        # try:
+        #     for start in range(0, self.seismic_data.shape[1], chunk_size):
+        #         end = min(start + chunk_size, self.seismic_data.shape[1])
+        #         for i in range(start, end):
+        #             filtered_seismic_data[:, i] = apply_filter(self.seismic_data[:, i], filter_type, cutoff_freqs,
+        #                                                        self.fs)
+        #
+        #     # Re-plot the filtered radargram
+        #     self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
+        #
+        # except Exception as e:
+        #     print(f"Error during filtering: {e}")
 
         # # Apply filter on each trace individually
         # filtered_seismic_data = np.zeros_like(self.seismic_data)
@@ -274,6 +372,7 @@ class MainWindow(QMainWindow):
     def update_filtered_plot(self, filtered_seismic_data):
         # Re-plot the filtered radargram
         self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({self.filter_box.currentText()} Filter)")
+
 
 def main():
     app = QApplication(sys.argv)
