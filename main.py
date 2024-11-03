@@ -124,6 +124,10 @@ class MplCanvas(FigureCanvasQTAgg):
         #   remove prev line
         if self.vertical_line:
             self.vertical_line.remove()
+        #   show location on GPS widget
+        lonX, latY = self.parent.parser.trace_coordinates[:, trace_number]
+        self.parent.mpl_gps_canvas.show_current_location(lonX, latY)
+
         
         self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
         self.draw()
@@ -157,6 +161,16 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.xaxis.get_major_formatter().set_scientific(False)
         self.axes.xaxis.get_major_formatter().set_useOffset(False)
 
+        self.draw()
+
+    def show_current_location(self, lonX, latY):
+        '''
+        should show location of current trace (when clicked) by two lines
+        '''
+        for line in self.axes.lines:
+            line.remove()
+        self.axes.axvline(x=lonX, color='blue', linestyle='--', linewidth=1)
+        self.axes.axhline(y=latY, color='blue', linestyle='--', linewidth=1)
         self.draw()
 
 
@@ -196,15 +210,15 @@ class MainWindow(QMainWindow):
         self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
         #   graph toolbar
-        self.mpl_toolbar = NavigationToolbar(self.mpl_canvas, self)
+        self.mpl_toolbar = NavigationToolbar(self.mpl_canvas, self, ())
 
         #   add all widgets
-        layout.addWidget(self.mpl_toolbar)
         layout.addWidget(self.mpl_canvas)
         layout.addWidget(self.mpl_gps_canvas)
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
         layout.addWidget(self.filter_btn)
+        layout.addWidget(self.mpl_toolbar)
         self.central_widget.setLayout(layout)
     
     #   button handlers
