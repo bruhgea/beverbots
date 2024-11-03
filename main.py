@@ -1,10 +1,8 @@
 import numpy as np
 import matplotlib
-
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
-
 from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
@@ -23,7 +21,6 @@ from PyQt5.QtWidgets import QLineEdit
 from scipy.ndimage import gaussian_filter1d
 
 file_path = '20240625132506554_TestGraaf22.25.sgy'
-
 
 # Filtering functions
 def butter_lowpass(cutoff, fs, order=5):
@@ -117,6 +114,24 @@ class MplCanvas(FigureCanvasQTAgg):
         self.axes = fig.add_subplot(111)
         super(MplCanvas, self).__init__(fig)
 
+        # Store the original limits for resetting later
+        self.original_xlim = None
+        self.original_ylim = None
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel events for zooming."""
+        xlim = self.axes.get_xlim()
+        ylim = self.axes.get_ylim()
+
+        # Zoom in or out based on the wheel event
+        scale_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+        x_range = (xlim[1] - xlim[0]) * scale_factor
+        y_range = (ylim[1] - ylim[0]) * scale_factor
+
+        self.axes.set_xlim([xlim[0], xlim[0] + x_range])
+        self.axes.set_ylim([ylim[0], ylim[0] + y_range])
+        self.draw()
+
 
 class MainWindow(QMainWindow):
     '''
@@ -133,6 +148,8 @@ class MainWindow(QMainWindow):
         self.order = 5  # Default filter order
         # self.color_scheme_box = 'seismic'
         self.color_scheme = 'seismic'
+        self.zoom_factor = 1.1  # Factor for zooming in and out
+
 
 
     def init_ui(self):
@@ -160,6 +177,15 @@ class MainWindow(QMainWindow):
         self.color_scheme_box = QComboBox()
         self.color_scheme_box.addItems(['seismic', 'viridis', 'plasma', 'inferno', 'gray', 'magma', 'cividis'])
         self.color_scheme_box.currentTextChanged.connect(self.update_color_scheme)
+
+        # Zoom in/out buttons
+        zoom_controls_layout = QHBoxLayout()
+        self.zoom_in_btn = QPushButton("Zoom In")
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        self.zoom_out_btn = QPushButton("Zoom Out")
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        zoom_controls_layout.addWidget(self.zoom_in_btn)
+        zoom_controls_layout.addWidget(self.zoom_out_btn)
 
         # Matplotlib FigureCanvas and toolbar for zoom/pan
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
@@ -197,6 +223,10 @@ class MainWindow(QMainWindow):
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
 
+        # Add Reset Zoom Button
+        self.reset_zoom_btn = QPushButton("Reset Zoom")
+        self.reset_zoom_btn.clicked.connect(self.reset_zoom)
+
         # Add all widgets to the layout
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
@@ -205,7 +235,50 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.mpl_canvas)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.color_scheme_box)
+        layout.addLayout(zoom_controls_layout)  # Add zoom controls layout
+        layout.addWidget(self.reset_zoom_btn)  # Add the reset button to the layout
         self.central_widget.setLayout(layout)
+
+    def reset_zoom(self):
+        """Reset the zoom level to the original limits."""
+        if self.mpl_canvas.original_xlim is not None and self.mpl_canvas.original_ylim is not None:
+            self.mpl_canvas.axes.set_xlim(self.mpl_canvas.original_xlim)
+            self.mpl_canvas.axes.set_ylim(self.mpl_canvas.original_ylim)
+            self.mpl_canvas.draw()
+
+    def zoom_in(self):
+        """Zoom in by decreasing the view limits."""
+        xlim = self.mpl_canvas.axes.get_xlim()
+        ylim = self.mpl_canvas.axes.get_ylim()
+
+        # Calculate the center of the current view
+        x_center = (xlim[0] + xlim[1]) / 2
+        y_center = (ylim[0] + ylim[1]) / 2
+
+        # Adjust limits based on zoom factor
+        x_range = (xlim[1] - xlim[0]) / self.zoom_factor
+        y_range = (ylim[1] - ylim[0]) / self.zoom_factor
+
+        self.mpl_canvas.axes.set_xlim([x_center - x_range / 2, x_center + x_range / 2])
+        self.mpl_canvas.axes.set_ylim([y_center - y_range / 2, y_center + y_range / 2])
+        self.mpl_canvas.draw()
+
+    def zoom_out(self):
+        """Zoom out by increasing the view limits."""
+        xlim = self.mpl_canvas.axes.get_xlim()
+        ylim = self.mpl_canvas.axes.get_ylim()
+
+        # Calculate the center of the current view
+        x_center = (xlim[0] + xlim[1]) / 2
+        y_center = (ylim[0] + ylim[1]) / 2
+
+        # Adjust limits based on zoom factor
+        x_range = (xlim[1] - xlim[0]) * self.zoom_factor
+        y_range = (ylim[1] - ylim[0]) * self.zoom_factor
+
+        self.mpl_canvas.axes.set_xlim([x_center - x_range / 2, x_center + x_range / 2])
+        self.mpl_canvas.axes.set_ylim([y_center - y_range / 2, y_center + y_range / 2])
+        self.mpl_canvas.draw()
 
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
@@ -267,6 +340,12 @@ class MainWindow(QMainWindow):
         self.mpl_canvas.axes.set_title(title)
         self.mpl_canvas.axes.set_xlabel("Trace number")
         self.mpl_canvas.axes.set_ylabel("Time (s)")
+        self.mpl_canvas.draw()
+
+        # Store the original limits for the reset function
+        self.mpl_canvas.original_xlim = self.mpl_canvas.axes.get_xlim()
+        self.mpl_canvas.original_ylim = self.mpl_canvas.axes.get_ylim()
+
         self.mpl_canvas.draw()
 
     # def update_cutoff(self):
