@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib
 
 matplotlib.use('Qt5Agg')
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 
 from scipy import ndimage as ndi
@@ -111,6 +111,12 @@ class MplCanvas(FigureCanvasQTAgg):
         self.axes = fig.add_subplot(111)
         super(MplCanvas, self).__init__(fig)
 
+class MplCanvas(FigureCanvasQTAgg):
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MplCanvas, self).__init__(fig)
+
 
 class MainWindow(QMainWindow):
     '''
@@ -125,6 +131,9 @@ class MainWindow(QMainWindow):
         self.fs = None  # Store sampling rate
         self.cutoff_freqs = [50]  # Default cutoff frequency
         self.order = 5  # Default filter order
+        # self.color_scheme_box = 'seismic'
+        self.color_scheme = 'seismic'
+
 
     def init_ui(self):
 
@@ -147,6 +156,15 @@ class MainWindow(QMainWindow):
         self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian'])
         self.filter_box.currentTextChanged.connect(self.on_filter_change)
 
+        # Color scheme selection
+        self.color_scheme_box = QComboBox()
+        self.color_scheme_box.addItems(['seismic', 'viridis', 'plasma', 'inferno', 'gray', 'magma', 'cividis'])
+        self.color_scheme_box.currentTextChanged.connect(self.update_color_scheme)
+
+        # Matplotlib FigureCanvas and toolbar for zoom/pan
+        self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
+        self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
+
         # Input fields for cutoff frequencies
         self.cutoff_input_low = QLineEdit()
         self.cutoff_input_low.setPlaceholderText("Cutoff Frequency (Low)")
@@ -168,15 +186,16 @@ class MainWindow(QMainWindow):
         order_label = QLabel("Filter Order:")
 
         controls_layout = QHBoxLayout()
-        controls_layout.addWidget(cutoff_label_low)
+        controls_layout.addWidget(QLabel("Low Cutoff:"))
         controls_layout.addWidget(self.cutoff_input_low)
-        controls_layout.addWidget(cutoff_label_high)
+        controls_layout.addWidget(QLabel("High Cutoff:"))
         controls_layout.addWidget(self.cutoff_input_high)
-        controls_layout.addWidget(order_label)
+        controls_layout.addWidget(QLabel("Order:"))
         controls_layout.addWidget(self.order_spinbox)
 
         # Matplotlib FigureCanvas object
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
+        self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
 
         # Add all widgets to the layout
         layout.addWidget(self.file_btn)
@@ -184,7 +203,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.filter_btn)
         layout.addLayout(controls_layout)
         layout.addWidget(self.mpl_canvas)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.color_scheme_box)
         self.central_widget.setLayout(layout)
+
+    def update_color_scheme(self, scheme):
+        self.color_scheme = scheme
+        if self.seismic_data is not None:
+            self.plot_radargram(self.seismic_data, "Radargram with Color Scheme")
 
     def on_filter_change(self, text):
         # Show/hide the high cutoff input based on the selected filter
@@ -237,7 +263,7 @@ class MainWindow(QMainWindow):
         Helper function to plot radargram on the canvas
         '''
         self.mpl_canvas.axes.clear()
-        self.mpl_canvas.axes.imshow(data, aspect='auto', cmap='seismic')
+        self.mpl_canvas.axes.imshow(data, aspect='auto', cmap=self.color_scheme)
         self.mpl_canvas.axes.set_title(title)
         self.mpl_canvas.axes.set_xlabel("Trace number")
         self.mpl_canvas.axes.set_ylabel("Time (s)")
