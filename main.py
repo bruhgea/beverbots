@@ -1,14 +1,14 @@
 import numpy as np
 import matplotlib
 matplotlib.use('Qt5Agg')
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from matplotlib.ticker import ScalarFormatter
 
 from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSizePolicy, QGridLayout
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -18,6 +18,8 @@ from obspy import read
 from scipy.signal import butter, filtfilt
 import sys
 import struct
+from matplotlib.lines import Line2D
+import matplotlib.patches as patches
 
 
 
@@ -88,9 +90,11 @@ class GprParser():
             lonX = struct.unpack('<f', bin_header[72:76])[0]
             latY = struct.unpack('<f', bin_header[76:80])[0]
             self.trace_coordinates[:, i] = (lonX, latY)
+            #   DEBUG
+            #print(f'trace #{i}:\nsample interval: {trace.stats.delta}')
         
         # Create the time axis (assuming uniform sample interval)
-        sample_interval = self.segy_stream[0].stats.delta  # Sample interval in seconds
+        sample_interval = self.segy_stream[0].stats.delta * 1000  # Sample interval to nanoseconds (is encoded in microseconds in file)
         self.time_axis = np.arange(0, self.samples_num * sample_interval, sample_interval)
 
 
@@ -132,6 +136,9 @@ class MplCanvas(FigureCanvasQTAgg):
         self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
         self.draw()
         self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
+    
+    def parent(self):
+        return self.parent
 
 class MplGpsCanvas(FigureCanvasQTAgg):
     '''
@@ -173,6 +180,36 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.axhline(y=latY, color='blue', linestyle='--', linewidth=1)
         self.draw()
 
+class GainWidget(FigureCanvasQTAgg):
+    '''
+    separate obj for gain widget
+    '''
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(GainWidget, self).__init__(fig)
+        self.axes.set_xlabel('Time (ns)')
+        self.axes.set_ylabel('Amplifier (dB)')
+        self.axes.set_title('Signal amplifier')
+
+
+    def plot_coordinates(self, lonX, latY):
+        self.axes.clear()
+        self.axes.scatter(lonX, latY, c='red', marker='+')
+        
+        self.axes.set_xlim([lonX.min(), lonX.max()])
+        self.axes.set_ylim([latY.min(), latY.max()])
+        #self.axes.set_aspect('equal')
+
+        #   force full numbers on axes
+        self.axes.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        self.axes.yaxis.get_major_formatter().set_scientific(False)
+        self.axes.yaxis.get_major_formatter().set_useOffset(False)
+        self.axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+        self.axes.xaxis.get_major_formatter().set_scientific(False)
+        self.axes.xaxis.get_major_formatter().set_useOffset(False)
+
+        self.draw()
 
 class MainWindow(QMainWindow):
     '''
@@ -186,10 +223,10 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle('GPR plotter')
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1920, 1080)
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        layout = QVBoxLayout()
+        layout = QGridLayout(self)
 
         #   button to open file
         self.file_btn = QPushButton("Open .sgy file")
@@ -210,16 +247,25 @@ class MainWindow(QMainWindow):
         self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
         #   graph toolbar
-        self.mpl_toolbar = NavigationToolbar(self.mpl_canvas, self, ())
+        self.mpl_toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
+
+        #   gain function
+        self.gain_widget = GainWidget(self)
 
         #   add all widgets
-        layout.addWidget(self.mpl_canvas)
-        layout.addWidget(self.mpl_gps_canvas)
-        layout.addWidget(self.file_btn)
-        layout.addWidget(self.filter_box)
-        layout.addWidget(self.filter_btn)
-        layout.addWidget(self.mpl_toolbar)
+        layout.addWidget(self.mpl_canvas, 0, 0)
+        layout.addWidget(self.mpl_gps_canvas, 1, 0)
+        layout.addWidget(self.file_btn, 2, 0)
+        layout.addWidget(self.filter_box, 3, 0)
+        layout.addWidget(self.filter_btn, 4, 0)
+        layout.addWidget(self.mpl_toolbar, 5, 0)
+        layout.addWidget(self.gain_widget, 0, 1, 6, 1, Qt.AlignRight)
+        
         self.central_widget.setLayout(layout)
+
+    def __str__(self):
+        print('MainWindow() called!')
+        return self
     
     #   button handlers
     def file_btn_clicked(self):
@@ -238,7 +284,7 @@ class MainWindow(QMainWindow):
         #self.mpl_canvas.axes.colorbar(label="Amplitude")
         self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
         self.mpl_canvas.axes.set_xlabel("Trace number")
-        self.mpl_canvas.axes.set_ylabel("Time (s)")            
+        self.mpl_canvas.axes.set_ylabel("Time (ns)")            
         #   refresh canvas
         self.mpl_canvas.draw()
 
