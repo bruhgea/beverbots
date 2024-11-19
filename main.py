@@ -1,7 +1,10 @@
 import numpy as np
 import matplotlib
+
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
 from matplotlib.figure import Figure
 from scipy import ndimage as ndi
 from shutil import copyfile
@@ -19,6 +22,9 @@ import sys
 from scipy.signal import butter, lfilter  # Use lfilter instead of filtfilt
 from PyQt5.QtWidgets import QLineEdit
 from scipy.ndimage import gaussian_filter1d
+from PyQt5.QtWidgets import QScrollArea
+from PyQt5.QtWidgets import QScrollBar
+from PyQt5.QtWidgets import QMessageBox
 
 file_path = '20240625132506554_TestGraaf22.25.sgy'
 
@@ -108,6 +114,7 @@ class MplCanvas(FigureCanvasQTAgg):
         self.axes = fig.add_subplot(111)
         super(MplCanvas, self).__init__(fig)
 
+
 class MplCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         fig = Figure(figsize=(width, height), dpi=dpi)
@@ -150,8 +157,6 @@ class MainWindow(QMainWindow):
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
 
-
-
     def init_ui(self):
 
         self.setWindowTitle('GPR plotter')
@@ -191,6 +196,7 @@ class MainWindow(QMainWindow):
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
 
+
         # Input fields for cutoff frequencies
         self.cutoff_input_low = QLineEdit()
         self.cutoff_input_low.setPlaceholderText("Cutoff Frequency (Low)")
@@ -227,16 +233,23 @@ class MainWindow(QMainWindow):
         self.reset_zoom_btn = QPushButton("Reset Zoom")
         self.reset_zoom_btn.clicked.connect(self.reset_zoom)
 
+        # Wrap the canvas in a scroll area
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.mpl_canvas)
+        self.scroll_area.setWidgetResizable(True)
+
         # Add all widgets to the layout
         layout.addWidget(self.file_btn)
         layout.addWidget(self.filter_box)
         layout.addWidget(self.filter_btn)
         layout.addLayout(controls_layout)
-        layout.addWidget(self.mpl_canvas)
+        layout.addWidget(self.scroll_area)  # Use scroll area for the canvas
         layout.addWidget(self.toolbar)
         layout.addWidget(self.color_scheme_box)
-        layout.addLayout(zoom_controls_layout)  # Add zoom controls layout
-        layout.addWidget(self.reset_zoom_btn)  # Add the reset button to the layout
+        layout.addLayout(zoom_controls_layout)
+        layout.addWidget(self.reset_zoom_btn)
+
+
         self.central_widget.setLayout(layout)
 
     def reset_zoom(self):
@@ -247,39 +260,48 @@ class MainWindow(QMainWindow):
             self.mpl_canvas.draw()
 
     def zoom_in(self):
-        """Zoom in by decreasing the view limits."""
-        xlim = self.mpl_canvas.axes.get_xlim()
-        ylim = self.mpl_canvas.axes.get_ylim()
-
-        # Calculate the center of the current view
-        x_center = (xlim[0] + xlim[1]) / 2
-        y_center = (ylim[0] + ylim[1]) / 2
-
-        # Adjust limits based on zoom factor
-        x_range = (xlim[1] - xlim[0]) / self.zoom_factor
-        y_range = (ylim[1] - ylim[0]) / self.zoom_factor
-
-        self.mpl_canvas.axes.set_xlim([x_center - x_range / 2, x_center + x_range / 2])
-        self.mpl_canvas.axes.set_ylim([y_center - y_range / 2, y_center + y_range / 2])
+        # Increase the size of the canvas when zooming in
+        self.mpl_canvas.setFixedSize(self.mpl_canvas.width() * 1.1, self.mpl_canvas.height() * 1.1)
+        self.mpl_canvas.axes.set_xlim(self.mpl_canvas.axes.get_xlim()[0] * 0.9,
+                                      self.mpl_canvas.axes.get_xlim()[1] * 1.1)
+        self.mpl_canvas.axes.set_ylim(self.mpl_canvas.axes.get_ylim()[0] * 0.9,
+                                      self.mpl_canvas.axes.get_ylim()[1] * 1.1)
         self.mpl_canvas.draw()
 
     def zoom_out(self):
-        """Zoom out by increasing the view limits."""
-        xlim = self.mpl_canvas.axes.get_xlim()
-        ylim = self.mpl_canvas.axes.get_ylim()
-
-        # Calculate the center of the current view
-        x_center = (xlim[0] + xlim[1]) / 2
-        y_center = (ylim[0] + ylim[1]) / 2
-
-        # Adjust limits based on zoom factor
-        x_range = (xlim[1] - xlim[0]) * self.zoom_factor
-        y_range = (ylim[1] - ylim[0]) * self.zoom_factor
-
-        self.mpl_canvas.axes.set_xlim([x_center - x_range / 2, x_center + x_range / 2])
-        self.mpl_canvas.axes.set_ylim([y_center - y_range / 2, y_center + y_range / 2])
+        # Decrease the size of the canvas when zooming out
+        self.mpl_canvas.setFixedSize(self.mpl_canvas.width() / 1.1, self.mpl_canvas.height() / 1.1)
+        self.mpl_canvas.axes.set_xlim(self.mpl_canvas.axes.get_xlim()[0] / 1.1,
+                                      self.mpl_canvas.axes.get_xlim()[1] / 0.9)
+        self.mpl_canvas.axes.set_ylim(self.mpl_canvas.axes.get_ylim()[0] / 1.1,
+                                      self.mpl_canvas.axes.get_ylim()[1] / 0.9)
         self.mpl_canvas.draw()
 
+    def update_view(self):
+        # Update plot limits based on current x and y limits
+        self.mpl_canvas.axes.set_xlim(self.current_xlim)
+        self.mpl_canvas.axes.set_ylim(self.current_ylim)
+        self.mpl_canvas.draw()
+
+        # Adjust scroll bar ranges and positions based on current view
+        self.h_scroll.setRange(int(self.initial_xlim[0]),
+                               int(self.initial_xlim[1] - (self.current_xlim[1] - self.current_xlim[0])))
+        self.v_scroll.setRange(int(self.initial_ylim[0]),
+                               int(self.initial_ylim[1] - (self.current_ylim[1] - self.current_ylim[0])))
+        self.h_scroll.setPageStep(int(self.current_xlim[1] - self.current_xlim[0]))
+        self.v_scroll.setPageStep(int(self.current_ylim[1] - self.current_ylim[0]))
+
+    def update_xlim(self, value):
+        # Update the x-axis limits based on the scroll bar position
+        new_xlim = (value, value + (self.current_xlim[1] - self.current_xlim[0]))
+        self.current_xlim = new_xlim
+        self.update_view()
+
+    def update_ylim(self, value):
+        # Update the y-axis limits based on the scroll bar position
+        new_ylim = (value, value + (self.current_ylim[1] - self.current_ylim[0]))
+        self.current_ylim = new_ylim
+        self.update_view()
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
         if self.seismic_data is not None:
@@ -330,6 +352,12 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"Error opening SEGY file with ObsPy: {e}")
+            msg = QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText(f"Error opening SEGY file: {e}")
+            msg.setIcon(QMessageBox.Critical)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
 
     def plot_radargram(self, data, title):
         '''
@@ -367,7 +395,12 @@ class MainWindow(QMainWindow):
         Apply the selected filter to the data and re-plot
         '''
         if self.seismic_data is None:
-            print("No data loaded to apply filter!")
+            msg1 = QMessageBox()
+            msg1.setWindowTitle("Error")
+            msg1.setText("No data loaded to apply filter!")
+            msg1.setIcon(QMessageBox.Critical)
+            msg1.setStandardButtons(QMessageBox.Ok)
+            msg1.exec_()
             return
         else:
             print(f"Data ready for filtering. Shape: {self.seismic_data.shape}, fs: {self.fs}")
@@ -375,6 +408,23 @@ class MainWindow(QMainWindow):
         filter_type = self.filter_box.currentText().lower()
 
         # Get cutoff frequencies from input boxes
+
+        low = self.cutoff_input_low.text()
+        high = self.cutoff_input_high.text()
+
+        msg = QMessageBox()
+        msg.setWindowTitle("Error")
+        msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
+        msg.setIcon(QMessageBox.Critical)
+        msg.setStandardButtons(QMessageBox.Ok)
+
+        if low == '':
+            msg.exec_()
+            return
+        if high == '' and filter_type == 'bandpass':
+            msg.exec_()
+            return
+
         low_cutoff = float(self.cutoff_input_low.text())
         high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
 
@@ -384,9 +434,6 @@ class MainWindow(QMainWindow):
             return
 
         if filter_type == 'bandpass':
-            if high_cutoff is None:
-                print("Please set both lowcut and highcut frequencies for the bandpass filter.")
-                return
             cutoff_freqs = [low_cutoff, high_cutoff]
         else:
             cutoff_freqs = [low_cutoff]
@@ -461,7 +508,7 @@ if __name__ == '__main__':
 #     continuous_data = np.concatenate([trace.data for trace in segy_stream])
 #
 #     # Create a time axis for the entire continuous plot
-#     sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
+#     sample_interval = segy_stream[0].stats.delta  # Sample interval in secondsfrom PyQt5.QtWidgets import QScrollArea
 #     total_time = num_samples * num_traces * sample_interval
 #     time_axis = np.linspace(0, total_time, num_samples * num_traces)
 #
