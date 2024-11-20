@@ -10,7 +10,8 @@ from matplotlib.figure import Figure
 from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QGridLayout, QHBoxLayout, QSpinBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -180,6 +181,20 @@ class MplCanvas(FigureCanvasQTAgg):
         self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
         self.draw()
         self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel events for zooming."""
+        xlim = self.axes.get_xlim()
+        ylim = self.axes.get_ylim()
+
+        # Zoom in or out based on the wheel event
+        scale_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+        x_range = (xlim[1] - xlim[0]) * scale_factor
+        y_range = (ylim[1] - ylim[0]) * scale_factor
+
+        self.axes.set_xlim([xlim[0], xlim[0] + x_range])
+        self.axes.set_ylim([ylim[0], ylim[0] + y_range])
+        self.draw()
     
     def parent(self):
         return self.parent
@@ -205,10 +220,8 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.set_aspect('equal')
 
         #   force full numbers on axes
-        self.axes.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
         self.axes.yaxis.get_major_formatter().set_scientific(False)
         self.axes.yaxis.get_major_formatter().set_useOffset(False)
-        self.axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
         self.axes.xaxis.get_major_formatter().set_scientific(False)
         self.axes.xaxis.get_major_formatter().set_useOffset(False)
 
@@ -260,30 +273,6 @@ class GainWidget(FigureCanvasQTAgg):
         refreshes the widget, should be called when new .sgy file is opened
         '''
         self.axes.clear()
-class MplCanvas(FigureCanvasQTAgg):
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
-        super(MplCanvas, self).__init__(fig)
-
-        # Store the original limits for resetting later
-        self.original_xlim = None
-        self.original_ylim = None
-
-    def wheelEvent(self, event):
-        """Handle mouse wheel events for zooming."""
-        xlim = self.axes.get_xlim()
-        ylim = self.axes.get_ylim()
-
-        # Zoom in or out based on the wheel event
-        scale_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
-        x_range = (xlim[1] - xlim[0]) * scale_factor
-        y_range = (ylim[1] - ylim[0]) * scale_factor
-
-        self.axes.set_xlim([xlim[0], xlim[0] + x_range])
-        self.axes.set_ylim([ylim[0], ylim[0] + y_range])
-        self.draw()
-
 
 class MainWindow(QMainWindow):
     '''
@@ -319,7 +308,7 @@ class MainWindow(QMainWindow):
         self.filter_btn = QPushButton("Apply filter")
         self.filter_btn.clicked.connect(self.filter_btn_clicked)
 
-        # Dropdown menu to select filter
+        #   dropdown menu to select filter
         self.filter_box = QComboBox()
         self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian'])
         self.filter_box.currentTextChanged.connect(self.on_filter_change)
@@ -373,7 +362,6 @@ class MainWindow(QMainWindow):
 
         # Matplotlib FigureCanvas object
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
-        self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
 
         # Add Reset Zoom Button
         self.reset_zoom_btn = QPushButton("Reset Zoom")
@@ -384,17 +372,25 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidget(self.mpl_canvas)
         self.scroll_area.setWidgetResizable(True)
 
-        # Add all widgets to the layout
-        layout.addWidget(self.file_btn)
-        layout.addWidget(self.filter_box)
-        layout.addWidget(self.filter_btn)
-        layout.addLayout(controls_layout)
-        layout.addWidget(self.scroll_area)  # Use scroll area for the canvas
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.color_scheme_box)
-        layout.addLayout(zoom_controls_layout)
-        layout.addWidget(self.reset_zoom_btn)
+        #   matplotlib FigureCanvas obj for GPS coordinates plot
+        self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
+         #   gain function
+        self.gain_widget = GainWidget(self, width=4)
+
+        # Add all widgets to the layout
+        #layout.addWidget(self.mpl_canvas, 0, 0)
+        layout.addWidget(self.filter_box, 0, 0)
+        layout.addWidget(self.filter_btn, 1, 0)
+        layout.addLayout(controls_layout, 2, 0)
+        layout.addWidget(self.scroll_area, 3, 0)  # Use scroll area for the canvas
+        layout.addWidget(self.toolbar, 4, 0)
+        layout.addWidget(self.color_scheme_box, 5, 0)
+        layout.addLayout(zoom_controls_layout, 6, 0)
+        layout.addWidget(self.reset_zoom_btn, 7, 0)
+        layout.addWidget(self.file_btn, 8, 0)
+        layout.addWidget(self.mpl_gps_canvas, 0, 1)
+        layout.addWidget(self.gain_widget, 1, 1, 6, 1, Qt.AlignRight)
 
         self.central_widget.setLayout(layout)
 
@@ -616,90 +612,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-""" Initial code for filtering and plotting the data """
-# # Open the SEGY file using ObsPy
-# try:
-#     # Read the SEGY file using ObsPy
-#     segy_stream = read(file_path, format="SEGY")
-#
-#     # Get the number of traces and the number of samples per trace
-#     num_traces = len(segy_stream)
-#     num_samples = len(segy_stream[0].data)
-#
-#     # Print some basic info about the traces
-#     print(f"Number of traces: {num_traces}")
-#     print(f"Sample points per trace: {num_samples}")
-#
-#     # Create a 2D numpy array to hold all trace data
-#     seismic_data = np.zeros((num_samples, num_traces))
-#
-#     # Fill the array with trace data
-#     for i, trace in enumerate(segy_stream):
-#         seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
-#
-#     # Create the time axis (assuming uniform sample interval)
-#     sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
-#     time_axis = np.arange(0, num_samples * sample_interval, sample_interval)
-#
-#     # Plot the radargram
-#     plt.figure(figsize=(10, 6))
-#     plt.imshow(seismic_data, aspect='auto', cmap='seismic', extent=[0, num_traces, time_axis[-1], time_axis[0]])
-#     plt.colorbar(label="Amplitude")
-#     plt.title("Radargram (Seismic Section)")
-#     plt.xlabel("Trace number")
-#     plt.ylabel("Time (s)")
-#     plt.show()
-#
-#     # Graphic
-#
-#     # Create a single array to hold the continuous time series data (all traces concatenated)
-#     continuous_data = np.concatenate([trace.data for trace in segy_stream])
-#
-#     # Create a time axis for the entire continuous plot
-#     sample_interval = segy_stream[0].stats.delta  # Sample interval in secondsfrom PyQt5.QtWidgets import QScrollArea
-#     total_time = num_samples * num_traces * sample_interval
-#     time_axis = np.linspace(0, total_time, num_samples * num_traces)
-#
-#     fs = 1 / sample_interval
-#     filter_type = 'lowpass' # Choose from 'lowpass', 'highpass', or 'bandpass'
-#     cutoff_freqs = [50]  # Cutoff frequency (Hz) for the filter
-#     fs = 1 / segy_stream[0].stats.delta  # Sampling rate (Hz)
-#
-#     filtered_data = apply_filter(continuous_data, filter_type, cutoff_freqs, fs, order=5)
-#     # Apply filter on each trace individually
-#     filtered_seismic_data = np.zeros_like(seismic_data)
-#     for i in range(num_traces):
-#         filtered_seismic_data[:, i] = apply_filter(seismic_data[:, i], filter_type, cutoff_freqs, fs)
-#
-#         # Plot the radargram after filtering
-#     plt.figure(figsize=(10, 6))
-#     plt.imshow(filtered_seismic_data, aspect='auto', cmap='seismic', extent=[0, num_traces, num_samples, 0])
-#     plt.colorbar(label="Amplitude")
-#     plt.title(f"Filtered Radargram ({filter_type.capitalize()} Filter)")
-#     plt.xlabel("Trace number")
-#     plt.ylabel("Sample")
-#     plt.show()
-#
-#     # Apply moving average filter (optional)
-#     # Uncomment to apply moving average
-#     window_size = 100  # Window size for the moving average
-#     filtered_data = moving_average(filtered_data, window_size)
-#
-#     # Plot the continuous line for all traces
-#     plt.figure(figsize=(12, 6))
-#     # Plot original data
-#     plt.plot(time_axis, continuous_data, color='gray', alpha=0.5, label="Original Data")
-#
-#     # Plot filtered data
-#     plt.plot(time_axis[:len(filtered_data)], filtered_data, color='k', label=f"Filtered Data ({filter_type})")
-#
-#     plt.title("All Seismic Traces with Filtering")
-#     plt.xlabel("Time (s)")
-#     plt.ylabel("Amplitude")
-#     plt.legend(loc='upper right')
-#     plt.grid(True)
-#     plt.show()
-#
-# except Exception as e:
-#     print(f"Error opening SEGY file with ObsPy: {e}")
