@@ -185,31 +185,37 @@ class GainWidget(FigureCanvasQTAgg):
     separate obj for gain widget
     '''
     def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.parent = parent
+        self.dragging_point = None
+
         fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = fig.add_subplot(111)
         super(GainWidget, self).__init__(fig)
-        self.axes.set_xlabel('Time (ns)')
-        self.axes.set_ylabel('Amplifier (dB)')
-        self.axes.set_title('Signal amplifier')
-
-
-    def plot_coordinates(self, lonX, latY):
-        self.axes.clear()
-        self.axes.scatter(lonX, latY, c='red', marker='+')
+        self.axes.set_xlabel('Gain [dB]')
+        self.axes.set_ylabel('Time [ns]')
+        self.axes.yaxis.label.set_rotation(90)
+        self.axes.set_title('Gain Function')
+        secax = self.axes.secondary_xaxis('top')
+        secax.set_xlabel('Attenuation[dB]')
+        #   change axis direction
+        self.axes.invert_yaxis()
+        #self.axes.set_ylim(0)
         
-        self.axes.set_xlim([lonX.min(), lonX.max()])
-        self.axes.set_ylim([latY.min(), latY.max()])
-        #self.axes.set_aspect('equal')
+        #   initial positions
+        self.point_positions = [[0, 0], [0, 0]]
 
-        #   force full numbers on axes
-        self.axes.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
-        self.axes.yaxis.get_major_formatter().set_scientific(False)
-        self.axes.yaxis.get_major_formatter().set_useOffset(False)
-        self.axes.xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
-        self.axes.xaxis.get_major_formatter().set_scientific(False)
-        self.axes.xaxis.get_major_formatter().set_useOffset(False)
-
-        self.draw()
+        # Add points to the plot
+        self.points = [
+            self.axes.plot(x, y, 'ro', picker=5)[0]  # Red points with pick radius of 5
+            for x, y in self.point_positions
+        ]
+    
+    # TODO
+    def plot_data(self):
+        '''
+        refreshes the widget, should be called when new .sgy file is opened
+        '''
+        self.axes.clear()
 
 class MainWindow(QMainWindow):
     '''
@@ -223,7 +229,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle('GPR plotter')
-        self.setGeometry(100, 100, 1920, 1080)
+        self.setGeometry(0, 0, 1920, 1080)
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         layout = QGridLayout(self)
@@ -250,7 +256,7 @@ class MainWindow(QMainWindow):
         self.mpl_toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
 
         #   gain function
-        self.gain_widget = GainWidget(self)
+        self.gain_widget = GainWidget(self, width=4)
 
         #   add all widgets
         layout.addWidget(self.mpl_canvas, 0, 0)
@@ -268,6 +274,7 @@ class MainWindow(QMainWindow):
         return self
     
     #   button handlers
+    #   TODO: clear data when open new seismogram instead of existing one
     def file_btn_clicked(self):
         '''
         Open .sgy file and plot
