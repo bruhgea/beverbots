@@ -32,8 +32,6 @@ from PyQt5.QtWidgets import QScrollArea
 from PyQt5.QtWidgets import QScrollBar
 from PyQt5.QtWidgets import QMessageBox
 
-file_path = '20240625132506554_TestGraaf22.25.sgy'
-
 # Filtering functions
 def butter_lowpass(cutoff, fs, order=5):
     nyquist = 0.5 * fs
@@ -119,6 +117,10 @@ class GprParser():
             self.segy_stream = read(file_path, format='SEGY')
         except Exception as e:
             print(f"Error opening SEGY file with ObsPy: {e}")
+
+        self.fs = None  # Store sampling rate
+        self.cutoff_freqs = [50]  # Default cutoff frequency
+        self.order = 5  # Default filter order
         
         self.traces_num = len(self.segy_stream)
         self.samples_num = len(self.segy_stream[0].data)
@@ -141,12 +143,19 @@ class GprParser():
         sample_interval = self.segy_stream[0].stats.delta * 1000  # Sample interval to nanoseconds (is encoded in microseconds in file)
         self.time_axis = np.arange(0, self.samples_num * sample_interval, sample_interval)
 
+    #   TODO
+    class GprFilter:
+        '''
+        inner class for filtering data
+        '''
+        def __init__(self):
+            pass
+
 
 class MplCanvas(FigureCanvasQTAgg):
     '''
     separate obj for plot widget
     '''
-
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.parent = parent
         fig = Figure(figsize=(width, height), dpi=dpi)
@@ -282,12 +291,8 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
         self.init_ui()
-        self.file_path = str()
         self.parser = None
-        self.seismic_data = None  # Store seismic data here for filtering
-        self.fs = None  # Store sampling rate
-        self.cutoff_freqs = [50]  # Default cutoff frequency
-        self.order = 5  # Default filter order
+        #self.seismic_data = None  # Store seismic data here for filtering
         # self.color_scheme_box = 'seismic'
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
@@ -360,9 +365,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Order:"))
         controls_layout.addWidget(self.order_spinbox)
 
-        # Matplotlib FigureCanvas object
-        self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
-
         # Add Reset Zoom Button
         self.reset_zoom_btn = QPushButton("Reset Zoom")
         self.reset_zoom_btn.clicked.connect(self.reset_zoom)
@@ -380,15 +382,15 @@ class MainWindow(QMainWindow):
 
         # Add all widgets to the layout
         #layout.addWidget(self.mpl_canvas, 0, 0)
-        layout.addWidget(self.filter_box, 0, 0)
-        layout.addWidget(self.filter_btn, 1, 0)
-        layout.addLayout(controls_layout, 2, 0)
-        layout.addWidget(self.scroll_area, 3, 0)  # Use scroll area for the canvas
-        layout.addWidget(self.toolbar, 4, 0)
-        layout.addWidget(self.color_scheme_box, 5, 0)
-        layout.addLayout(zoom_controls_layout, 6, 0)
-        layout.addWidget(self.reset_zoom_btn, 7, 0)
-        layout.addWidget(self.file_btn, 8, 0)
+        layout.addLayout(controls_layout, 1, 0)
+        layout.addWidget(self.filter_box, 2, 0)
+        layout.addWidget(self.filter_btn, 3, 0)
+        layout.addWidget(self.scroll_area, 4, 0)  # Use scroll area for the canvas
+        layout.addWidget(self.toolbar, 5, 0)
+        layout.addWidget(self.color_scheme_box, 6, 0)
+        layout.addLayout(zoom_controls_layout, 7, 0)
+        layout.addWidget(self.reset_zoom_btn, 8, 0)
+        layout.addWidget(self.file_btn, 9, 0)
         layout.addWidget(self.mpl_gps_canvas, 0, 1)
         layout.addWidget(self.gain_widget, 1, 1, 6, 1, Qt.AlignRight)
 
@@ -446,8 +448,8 @@ class MainWindow(QMainWindow):
         self.update_view()
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
-        if self.seismic_data is not None:
-            self.plot_radargram(self.seismic_data, "Radargram with Color Scheme")
+        if self.parser.seismic_data is not None:
+            self.plot_radargram(self.parser.seismic_data, "Radargram with Color Scheme")
 
     def on_filter_change(self, text):
         # Show/hide the high cutoff input based on the selected filter
@@ -465,44 +467,21 @@ class MainWindow(QMainWindow):
         if (len(self.file_path) == 0):
             return
         print(f'opened file {self.file_path}')
-        try:
-            # Read the SEGY file using ObsPy
-            segy_stream = read(self.file_path, format="SEGY")
+        
+        # init Gpr parser
+        self.parser = GprParser(self.file_path)
+        # plot the radargram
+        self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
+        #self.mpl_canvas.axes.colorbar(label="Amplitude")
+        self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
+        self.mpl_canvas.axes.set_xlabel("Trace number")
+        self.mpl_canvas.axes.set_ylabel("Time (ns)")            
+        #   refresh canvas
+        self.mpl_canvas.draw()
 
-            # Get the number of traces and the number of samples per trace
-            num_traces = len(segy_stream)
-            num_samples = len(segy_stream[0].data)
-
-            # Print some basic info about the traces
-            print(f"Number of traces: {num_traces}")
-            print(f"Sample points per trace: {num_samples}")
-
-            # Create a 2D numpy array to hold all trace data
-            self.seismic_data = np.zeros((num_samples, num_traces))
-
-            # Fill the array with trace data
-            for i, trace in enumerate(segy_stream):
-                self.seismic_data[:, i] = trace.data  # Assign each trace's data to a column in the 2D array
-
-            # Create the time axis (assuming uniform sample interval)
-            sample_interval = segy_stream[0].stats.delta  # Sample interval in seconds
-            self.fs = 1 / sample_interval  # Sampling rate (Hz)
-
-            # Debug: Confirm seismic_data is correctly loaded
-            print(f"Seismic data loaded: {self.seismic_data.shape}")
-            print(f"Sampling rate (fs): {self.fs}")
-
-            # Plot the original radargram
-            self.plot_radargram(self.seismic_data, "Radargram (Seismic Section)")
-
-        except Exception as e:
-            print(f"Error opening SEGY file with ObsPy: {e}")
-            msg = QMessageBox()
-            msg.setWindowTitle("Error")
-            msg.setText(f"Error opening SEGY file: {e}")
-            msg.setIcon(QMessageBox.Critical)
-            msg.setStandardButtons(QMessageBox.Ok)
-            msg.exec_()
+        # plot GPS coordinates
+        lonX, latY = self.parser.trace_coordinates
+        self.mpl_gps_canvas.plot_coordinates(lonX, latY)
 
     def plot_radargram(self, data, title):
         '''
@@ -525,7 +504,8 @@ class MainWindow(QMainWindow):
     #     self.cutoff_freqs = [self.cutoff_slider.value()]
 
     def update_order(self):
-        self.order = self.order_spinbox.value()
+        if self.parser != None:     #   ignore if parser not initialized
+            self.parser.order = self.order_spinbox.value()
 
     def moving_average(self, data, window_size):
         """
@@ -539,7 +519,7 @@ class MainWindow(QMainWindow):
         '''
         Apply the selected filter to the data and re-plot
         '''
-        if self.seismic_data is None:
+        if self.parser is None:
             msg1 = QMessageBox()
             msg1.setWindowTitle("Error")
             msg1.setText("No data loaded to apply filter!")
@@ -548,7 +528,7 @@ class MainWindow(QMainWindow):
             msg1.exec_()
             return
         else:
-            print(f"Data ready for filtering. Shape: {self.seismic_data.shape}, fs: {self.fs}")
+            print(f"Data ready for filtering. Shape: {self.parser.seismic_data.shape}, fs: {self.parser.fs}")
 
         filter_type = self.filter_box.currentText().lower()
 
@@ -575,7 +555,7 @@ class MainWindow(QMainWindow):
 
         if filter_type == 'none':
             print("No filter selected")
-            self.plot_radargram(self.seismic_data, "Radargram (Original Data)")
+            self.plot_radargram(self.parser.seismic_data, "Radargram (Original Data)")
             return
 
         if filter_type == 'bandpass':
@@ -585,15 +565,15 @@ class MainWindow(QMainWindow):
 
         # Apply the filter
         if filter_type == 'moving_average':
-            window_size = self.order  # Use order as the window size for moving average
+            window_size = self.parser.order  # Use order as the window size for moving average
             filtered_seismic_data = np.apply_along_axis(
                 lambda trace: self.moving_average(trace, window_size),
-                axis=0, arr=self.seismic_data
+                axis=0, arr=self.parser.seismic_data
             )
         else:
             filtered_seismic_data = np.apply_along_axis(
-                lambda trace: apply_filter(trace, filter_type, cutoff_freqs, self.fs, self.order),
-                axis=0, arr=self.seismic_data
+                lambda trace: apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
+                axis=0, arr=self.parser.seismic_data
             )
 
         self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
