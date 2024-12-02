@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib
 
 matplotlib.use('Qt5Agg')
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT, NavigationToolbar2QT
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from matplotlib.figure import Figure
@@ -14,7 +14,6 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsS
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from obspy.io.segy.segy import SEGYFile
 import matplotlib.pyplot as plt
 from obspy import read
@@ -32,81 +31,6 @@ from PyQt5.QtWidgets import QScrollArea
 from PyQt5.QtWidgets import QScrollBar
 from PyQt5.QtWidgets import QMessageBox
 
-# Filtering functions
-def butter_lowpass(cutoff, fs, order=5):
-    nyquist = 0.5 * fs
-    normal_cutoff = cutoff / nyquist
-    b, a = butter(order, normal_cutoff, btype='lowpass', analog=False)
-    return b, a
-
-
-def butter_highpass(cutoff, fs, order=5):
-    nyquist = 0.5 * fs
-    normal_cutoff = cutoff / nyquist
-    b, a = butter(order, normal_cutoff, btype='highpass', analog=False)
-    return b, a
-
-
-def butter_bandpass(lowcut, highcut, fs, order=5):
-    nyquist = 0.5 * fs
-    low = lowcut / nyquist
-    high = highcut / nyquist
-    b, a = butter(order, [low, high], btype='bandpass')
-    return b, a
-
-
-def apply_filter(data, filter_type, cutoff_freqs, fs, order=5):
-    if filter_type == 'lowpass':
-        b, a = butter_lowpass(cutoff_freqs[0], fs, order=order)
-    elif filter_type == 'highpass':
-        b, a = butter_highpass(cutoff_freqs[0], fs, order=order)
-    elif filter_type == 'bandpass':
-        if len(cutoff_freqs) != 2 or cutoff_freqs[0] >= cutoff_freqs[1]:
-            raise ValueError("For bandpass filter, cutoff_freqs should contain two values: [lowcut, highcut]")
-        b, a = butter_bandpass(cutoff_freqs[0], cutoff_freqs[1], fs, order=order)
-    elif filter_type == 'moving_average':
-        return moving_average(data, order)  # window size is `order`
-    elif filter_type == 'gaussian':
-        sigma = order  # Use order as sigma for Gaussian
-        return gaussian_filter1d(data, sigma=sigma, mode='nearest')
-    else:
-        raise ValueError("Unknown filter type. Choose from 'lowpass', 'highpass', or 'bandpass'.")
-
-    # Apply the filter
-    filtered_data = filtfilt(b, a, data)
-
-    # Adjust length to match original data
-    if len(filtered_data) > len(data):
-        filtered_data = filtered_data[:len(data)]
-    elif len(filtered_data) < len(data):
-        filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)), mode='constant')
-
-    return filtered_data
-
-
-def moving_average(data, window_size):
-    if len(data) < window_size:
-        raise ValueError("Window size must be less than or equal to the length of the data.")
-    return np.convolve(data, np.ones(window_size) / window_size, mode='same')
-
-
-def filter_in_chunks(seismic_data, filter_type, cutoff_freqs, fs, order=5, chunk_size=100):
-    num_traces = seismic_data.shape[1]
-    filtered_seismic_data = np.zeros_like(seismic_data)
-
-    for i in range(0, num_traces, chunk_size):
-        end = min(i + chunk_size, num_traces)
-        for j in range(i, end):
-            try:
-                filtered_trace = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs, order)
-                if filtered_trace.shape[0] != seismic_data.shape[0]:
-                    print(f"Warning: Trace {j} shape mismatch after filtering. Adjusting shape.")
-                filtered_seismic_data[:, j] = filtered_trace[:seismic_data.shape[0]]  # Match length
-            except Exception as e:
-                print(f"Error filtering trace {j}: {e}")
-
-    return filtered_seismic_data
-
 class GprParser():
     '''
     class to store GPR data read from file
@@ -118,7 +42,6 @@ class GprParser():
         except Exception as e:
             print(f"Error opening SEGY file with ObsPy: {e}")
 
-        self.fs = None  # Store sampling rate
         self.cutoff_freqs = [50]  # Default cutoff frequency
         self.order = 5  # Default filter order
         
@@ -140,16 +63,92 @@ class GprParser():
             #print(f'trace #{i}:\nsample interval: {trace.stats.delta}')
         
         # Create the time axis (assuming uniform sample interval)
-        sample_interval = self.segy_stream[0].stats.delta * 1000  # Sample interval to nanoseconds (is encoded in microseconds in file)
-        self.time_axis = np.arange(0, self.samples_num * sample_interval, sample_interval)
+        self.sample_interval = self.segy_stream[0].stats.delta  # sample interval in seconds
+        self.fs = self.segy_stream[0].stats.sampling_rate       # samoke freq in Hz
+
+        self.time_axis = np.arange(0, self.samples_num * self.sample_interval, self.sample_interval)
+
+        # init filter instance
+        self.filter = self.GprFilter(self)
 
     #   TODO
     class GprFilter:
         '''
         inner class for filtering data
         '''
-        def __init__(self):
-            pass
+        def __init__(self, parent_parser):
+            self.parent = parent_parser
+
+        # Filtering functions
+        def butter_lowpass(self, cutoff, fs, order=5):
+            nyquist = 0.5 * fs
+            normal_cutoff = cutoff / nyquist
+            b, a = butter(order, normal_cutoff, btype='lowpass', analog=False)
+            return b, a
+        
+        def butter_highpass(self, cutoff, fs, order=5):
+            nyquist = 0.5 * fs
+            normal_cutoff = cutoff / nyquist
+            b, a = butter(order, normal_cutoff, btype='highpass', analog=False)
+            return b, a
+
+
+        def butter_bandpass(self, lowcut, highcut, fs, order=5):
+            nyquist = 0.5 * fs
+            low = lowcut / nyquist
+            high = highcut / nyquist
+            b, a = butter(order, [low, high], btype='bandpass')
+            return b, a
+        
+        def moving_average(self, data, window_size):
+            if len(data) < window_size:
+                raise ValueError("Window size must be less than or equal to the length of the data.")
+            return np.convolve(data, np.ones(window_size) / window_size, mode='same')
+
+
+        def filter_in_chunks(self, seismic_data, filter_type, cutoff_freqs, fs, order=5, chunk_size=100):
+            num_traces = seismic_data.shape[1]
+            filtered_seismic_data = np.zeros_like(seismic_data)
+
+            for i in range(0, num_traces, chunk_size):
+                end = min(i + chunk_size, num_traces)
+                for j in range(i, end):
+                    try:
+                        filtered_trace = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs, order)
+                        if filtered_trace.shape[0] != seismic_data.shape[0]:
+                            print(f"Warning: Trace {j} shape mismatch after filtering. Adjusting shape.")
+                        filtered_seismic_data[:, j] = filtered_trace[:seismic_data.shape[0]]  # Match length
+                    except Exception as e:
+                        print(f"Error filtering trace {j}: {e}")
+            return filtered_seismic_data
+        
+        def apply_filter(self, data, filter_type, cutoff_freqs, fs, order=5):
+            if filter_type == 'lowpass':
+                b, a = self.butter_lowpass(cutoff_freqs[0], fs, order=order)
+            elif filter_type == 'highpass':
+                b, a = self.butter_highpass(cutoff_freqs[0], fs, order=order)
+            elif filter_type == 'bandpass':
+                if len(cutoff_freqs) != 2 or cutoff_freqs[0] >= cutoff_freqs[1]:
+                    raise ValueError("For bandpass filter, cutoff_freqs should contain two values: [lowcut, highcut]")
+                b, a = self.butter_bandpass(cutoff_freqs[0], cutoff_freqs[1], fs, order=order)
+            elif filter_type == 'moving_average':
+                return self.moving_average(data, order)  # window size is `order`
+            elif filter_type == 'gaussian':
+                sigma = order  # Use order as sigma for Gaussian
+                return gaussian_filter1d(data, sigma=sigma, mode='nearest')
+            else:
+                raise ValueError("Unknown filter type. Choose from 'lowpass', 'highpass', or 'bandpass'.")
+
+            # Apply the filter
+            filtered_data = filtfilt(b, a, data)
+
+            # Adjust length to match original data
+            if len(filtered_data) > len(data):
+                filtered_data = filtered_data[:len(data)]
+            elif len(filtered_data) < len(data):
+                filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)), mode='constant')
+
+            return filtered_data
 
 
 class MplCanvas(FigureCanvasQTAgg):
@@ -291,9 +290,6 @@ class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
         self.init_ui()
-        self.parser = None
-        #self.seismic_data = None  # Store seismic data here for filtering
-        # self.color_scheme_box = 'seismic'
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
 
@@ -303,6 +299,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(0, 0, 1920, 1080)
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
+        #   one main layout
         layout = QGridLayout(self)
 
         #   button to open file
@@ -324,13 +321,13 @@ class MainWindow(QMainWindow):
         self.color_scheme_box.currentTextChanged.connect(self.update_color_scheme)
 
         # Zoom in/out buttons
-        zoom_controls_layout = QHBoxLayout()
+        self.zoom_controls_layout = QHBoxLayout()
         self.zoom_in_btn = QPushButton("Zoom In")
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         self.zoom_out_btn = QPushButton("Zoom Out")
         self.zoom_out_btn.clicked.connect(self.zoom_out)
-        zoom_controls_layout.addWidget(self.zoom_in_btn)
-        zoom_controls_layout.addWidget(self.zoom_out_btn)
+        self.zoom_controls_layout.addWidget(self.zoom_in_btn)
+        self.zoom_controls_layout.addWidget(self.zoom_out_btn)
 
         # Matplotlib FigureCanvas and toolbar for zoom/pan
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
@@ -359,9 +356,9 @@ class MainWindow(QMainWindow):
 
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(QLabel("Low Cutoff:"))
-        controls_layout.addWidget(self.cutoff_input_low)
         controls_layout.addWidget(QLabel("High Cutoff:"))
         controls_layout.addWidget(self.cutoff_input_high)
+        controls_layout.addWidget(self.cutoff_input_low)
         controls_layout.addWidget(QLabel("Order:"))
         controls_layout.addWidget(self.order_spinbox)
 
@@ -377,20 +374,19 @@ class MainWindow(QMainWindow):
         #   matplotlib FigureCanvas obj for GPS coordinates plot
         self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
-         #   gain function
+        #   gain function
         self.gain_widget = GainWidget(self, width=4)
 
         # Add all widgets to the layout
-        #layout.addWidget(self.mpl_canvas, 0, 0)
+        layout.addWidget(self.scroll_area, 0, 0)  # Use scroll area for the canvas
         layout.addLayout(controls_layout, 1, 0)
         layout.addWidget(self.filter_box, 2, 0)
         layout.addWidget(self.filter_btn, 3, 0)
-        layout.addWidget(self.scroll_area, 4, 0)  # Use scroll area for the canvas
-        layout.addWidget(self.toolbar, 5, 0)
-        layout.addWidget(self.color_scheme_box, 6, 0)
-        layout.addLayout(zoom_controls_layout, 7, 0)
-        layout.addWidget(self.reset_zoom_btn, 8, 0)
-        layout.addWidget(self.file_btn, 9, 0)
+        layout.addWidget(self.toolbar, 4, 0)
+        layout.addWidget(self.color_scheme_box, 5, 0)
+        #layout.addLayout(zoom_controls_layout, 6, 0)   crashes
+        #layout.addWidget(self.reset_zoom_btn, 7, 0)    crashes
+        layout.addWidget(self.file_btn, 8, 0)
         layout.addWidget(self.mpl_gps_canvas, 0, 1)
         layout.addWidget(self.gain_widget, 1, 1, 6, 1, Qt.AlignRight)
 
@@ -507,14 +503,6 @@ class MainWindow(QMainWindow):
         if self.parser != None:     #   ignore if parser not initialized
             self.parser.order = self.order_spinbox.value()
 
-    def moving_average(self, data, window_size):
-        """
-        Apply a moving average filter to the input data.
-        """
-        if len(data) < window_size:
-            raise ValueError("Window size must be less than or equal to the length of the data.")
-        return np.convolve(data, np.ones(window_size) / window_size, mode='same')
-
     def filter_btn_clicked(self):
         '''
         Apply the selected filter to the data and re-plot
@@ -567,12 +555,12 @@ class MainWindow(QMainWindow):
         if filter_type == 'moving_average':
             window_size = self.parser.order  # Use order as the window size for moving average
             filtered_seismic_data = np.apply_along_axis(
-                lambda trace: self.moving_average(trace, window_size),
+                lambda trace: self.parser.filter.moving_average(trace, window_size),
                 axis=0, arr=self.parser.seismic_data
             )
         else:
             filtered_seismic_data = np.apply_along_axis(
-                lambda trace: apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
+                lambda trace: self.parser.filter.apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
                 axis=0, arr=self.parser.seismic_data
             )
 
