@@ -106,22 +106,6 @@ class GprParser():
             return np.convolve(data, np.ones(window_size) / window_size, mode='same')
 
 
-        def filter_in_chunks(self, seismic_data, filter_type, cutoff_freqs, fs, order=5, chunk_size=100):
-            num_traces = seismic_data.shape[1]
-            filtered_seismic_data = np.zeros_like(seismic_data)
-
-            for i in range(0, num_traces, chunk_size):
-                end = min(i + chunk_size, num_traces)
-                for j in range(i, end):
-                    try:
-                        filtered_trace = apply_filter(seismic_data[:, j], filter_type, cutoff_freqs, fs, order)
-                        if filtered_trace.shape[0] != seismic_data.shape[0]:
-                            print(f"Warning: Trace {j} shape mismatch after filtering. Adjusting shape.")
-                        filtered_seismic_data[:, j] = filtered_trace[:seismic_data.shape[0]]  # Match length
-                    except Exception as e:
-                        print(f"Error filtering trace {j}: {e}")
-            return filtered_seismic_data
-        
         def apply_filter(self, data, filter_type, cutoff_freqs, fs, order=5):
             if filter_type == 'lowpass':
                 b, a = self.butter_lowpass(cutoff_freqs[0], fs, order=order)
