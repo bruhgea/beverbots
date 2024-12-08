@@ -24,12 +24,14 @@ from matplotlib.lines import Line2D
 import matplotlib.patches as patches
 
 
-from scipy.signal import butter, lfilter  # Use lfilter instead of filtfilt
+from scipy.signal import butter, lfilter
 from PyQt5.QtWidgets import QLineEdit
 from scipy.ndimage import gaussian_filter1d
 from PyQt5.QtWidgets import QScrollArea
 from PyQt5.QtWidgets import QScrollBar
 from PyQt5.QtWidgets import QMessageBox
+from scipy.signal import iirnotch, medfilt
+
 
 class GprParser():
     '''
@@ -105,6 +107,14 @@ class GprParser():
                 raise ValueError("Window size must be less than or equal to the length of the data.")
             return np.convolve(data, np.ones(window_size) / window_size, mode='same')
 
+        def notch_filter(self, freq, fs):
+            nyquist = 0.5 * fs
+            notch_freq = freq / nyquist
+            b, a = iirnotch(notch_freq, Q=30)
+            return b, a
+        def median_filter(self, data, kernel_size):
+            return medfilt(data, kernel_size)
+
 
         def apply_filter(self, data, filter_type, cutoff_freqs, fs, order=5):
             if filter_type == 'lowpass':
@@ -120,6 +130,14 @@ class GprParser():
             elif filter_type == 'gaussian':
                 sigma = order  # Use order as sigma for Gaussian
                 return gaussian_filter1d(data, sigma=sigma, mode='nearest')
+            elif filter_type == 'notch':
+                b, a = self.notch_filter(cutoff_freqs[0], fs)
+                return filtfilt(b, a, data)
+            elif filter_type == 'median':
+                kernel_size = order  # Use `order` as kernel size
+                if kernel_size % 2 == 0:
+                    kernel_size += 1  # Ensure odd kernel size
+                return self.median_filter(data, kernel_size)
             else:
                 raise ValueError("Unknown filter type. Choose from 'lowpass', 'highpass', or 'bandpass'.")
 
@@ -296,7 +314,7 @@ class MainWindow(QMainWindow):
 
         #   dropdown menu to select filter
         self.filter_box = QComboBox()
-        self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian'])
+        self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian', 'notch', 'median'])
         self.filter_box.currentTextChanged.connect(self.on_filter_change)
 
         # Color scheme selection
@@ -351,9 +369,9 @@ class MainWindow(QMainWindow):
         self.reset_zoom_btn.clicked.connect(self.reset_zoom)
 
         # Wrap the canvas in a scroll area
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidget(self.mpl_canvas)
-        self.scroll_area.setWidgetResizable(True)
+        # self.scroll_area = QScrollArea()
+        # self.scroll_area.setWidget(self.mpl_canvas)
+        # self.scroll_area.setWidgetResizable(True)
 
         #   matplotlib FigureCanvas obj for GPS coordinates plot
         self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
@@ -362,14 +380,15 @@ class MainWindow(QMainWindow):
         self.gain_widget = GainWidget(self, width=4)
 
         # Add all widgets to the layout
-        layout.addWidget(self.scroll_area, 0, 0)  # Use scroll area for the canvas
+        # layout.addWidget(self.scroll_area, 0, 0)  # Use scroll area for the canvas
+        layout.addWidget(self.mpl_canvas, 0, 0)  # Directly add the canvas
         layout.addLayout(controls_layout, 1, 0)
         layout.addWidget(self.filter_box, 2, 0)
         layout.addWidget(self.filter_btn, 3, 0)
         layout.addWidget(self.toolbar, 4, 0)
         layout.addWidget(self.color_scheme_box, 5, 0)
-        #layout.addLayout(zoom_controls_layout, 6, 0)   crashes
-        #layout.addWidget(self.reset_zoom_btn, 7, 0)    crashes
+        layout.addLayout(self.zoom_controls_layout, 6, 0)
+        layout.addWidget(self.reset_zoom_btn, 7, 0)
         layout.addWidget(self.file_btn, 8, 0)
         layout.addWidget(self.mpl_gps_canvas, 0, 1)
         layout.addWidget(self.gain_widget, 1, 1, 6, 1, Qt.AlignRight)
@@ -378,10 +397,15 @@ class MainWindow(QMainWindow):
 
     def reset_zoom(self):
         """Reset the zoom level to the original limits."""
-        if self.mpl_canvas.original_xlim is not None and self.mpl_canvas.original_ylim is not None:
-            self.mpl_canvas.axes.set_xlim(self.mpl_canvas.original_xlim)
-            self.mpl_canvas.axes.set_ylim(self.mpl_canvas.original_ylim)
-            self.mpl_canvas.draw()
+        if hasattr(self.mpl_canvas, 'original_xlim') and hasattr(self.mpl_canvas, 'original_ylim'):
+            if self.mpl_canvas.original_xlim and self.mpl_canvas.original_ylim:
+                self.mpl_canvas.axes.set_xlim(self.mpl_canvas.original_xlim)
+                self.mpl_canvas.axes.set_ylim(self.mpl_canvas.original_ylim)
+                self.mpl_canvas.draw()
+            else:
+                QMessageBox.warning(self, "Reset Zoom", "No zoom level to reset.")
+        else:
+            QMessageBox.warning(self, "Reset Zoom", "Original limits not set.")
 
     def zoom_in(self):
         # Increase the size of the canvas when zooming in
@@ -401,31 +425,31 @@ class MainWindow(QMainWindow):
                                       self.mpl_canvas.axes.get_ylim()[1] / 0.9)
         self.mpl_canvas.draw()
 
-    def update_view(self):
-        # Update plot limits based on current x and y limits
-        self.mpl_canvas.axes.set_xlim(self.current_xlim)
-        self.mpl_canvas.axes.set_ylim(self.current_ylim)
-        self.mpl_canvas.draw()
-
-        # Adjust scroll bar ranges and positions based on current view
-        self.h_scroll.setRange(int(self.initial_xlim[0]),
-                               int(self.initial_xlim[1] - (self.current_xlim[1] - self.current_xlim[0])))
-        self.v_scroll.setRange(int(self.initial_ylim[0]),
-                               int(self.initial_ylim[1] - (self.current_ylim[1] - self.current_ylim[0])))
-        self.h_scroll.setPageStep(int(self.current_xlim[1] - self.current_xlim[0]))
-        self.v_scroll.setPageStep(int(self.current_ylim[1] - self.current_ylim[0]))
-
-    def update_xlim(self, value):
-        # Update the x-axis limits based on the scroll bar position
-        new_xlim = (value, value + (self.current_xlim[1] - self.current_xlim[0]))
-        self.current_xlim = new_xlim
-        self.update_view()
-
-    def update_ylim(self, value):
-        # Update the y-axis limits based on the scroll bar position
-        new_ylim = (value, value + (self.current_ylim[1] - self.current_ylim[0]))
-        self.current_ylim = new_ylim
-        self.update_view()
+    # def update_view(self):
+    #     # Update plot limits based on current x and y limits
+    #     self.mpl_canvas.axes.set_xlim(self.current_xlim)
+    #     self.mpl_canvas.axes.set_ylim(self.current_ylim)
+    #     self.mpl_canvas.draw()
+    #
+    #     # Adjust scroll bar ranges and positions based on current view
+    #     self.h_scroll.setRange(int(self.initial_xlim[0]),
+    #                            int(self.initial_xlim[1] - (self.current_xlim[1] - self.current_xlim[0])))
+    #     self.v_scroll.setRange(int(self.initial_ylim[0]),
+    #                            int(self.initial_ylim[1] - (self.current_ylim[1] - self.current_ylim[0])))
+    #     self.h_scroll.setPageStep(int(self.current_xlim[1] - self.current_xlim[0]))
+    #     self.v_scroll.setPageStep(int(self.current_ylim[1] - self.current_ylim[0]))
+    #
+    # def update_xlim(self, value):
+    #     # Update the x-axis limits based on the scroll bar position
+    #     new_xlim = (value, value + (self.current_xlim[1] - self.current_xlim[0]))
+    #     self.current_xlim = new_xlim
+    #     self.update_view()
+    #
+    # def update_ylim(self, value):
+    #     # Update the y-axis limits based on the scroll bar position
+    #     new_ylim = (value, value + (self.current_ylim[1] - self.current_ylim[0]))
+    #     self.current_ylim = new_ylim
+    #     self.update_view()
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
         if self.parser.seismic_data is not None:
@@ -450,14 +474,15 @@ class MainWindow(QMainWindow):
         
         # init Gpr parser
         self.parser = GprParser(self.file_path)
+        self.plot_radargram(self.parser.seismic_data, "Radargram (Seismic Section)")
         # plot the radargram
-        self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
-        #self.mpl_canvas.axes.colorbar(label="Amplitude")
-        self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
-        self.mpl_canvas.axes.set_xlabel("Trace number")
-        self.mpl_canvas.axes.set_ylabel("Time (ns)")            
-        #   refresh canvas
-        self.mpl_canvas.draw()
+        # self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
+        # #self.mpl_canvas.axes.colorbar(label="Amplitude")
+        # self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
+        # self.mpl_canvas.axes.set_xlabel("Trace number")
+        # self.mpl_canvas.axes.set_ylabel("Time (ns)")
+        # #   refresh canvas
+        # self.mpl_canvas.draw()
 
         # plot GPS coordinates
         lonX, latY = self.parser.trace_coordinates
@@ -472,11 +497,12 @@ class MainWindow(QMainWindow):
         self.mpl_canvas.axes.set_title(title)
         self.mpl_canvas.axes.set_xlabel("Trace number")
         self.mpl_canvas.axes.set_ylabel("Time (s)")
-        self.mpl_canvas.draw()
 
         # Store the original limits for the reset function
         self.mpl_canvas.original_xlim = self.mpl_canvas.axes.get_xlim()
         self.mpl_canvas.original_ylim = self.mpl_canvas.axes.get_ylim()
+
+        print(f"Original limits set: xlim={self.mpl_canvas.original_xlim}, ylim={self.mpl_canvas.original_ylim}")
 
         self.mpl_canvas.draw()
 
@@ -545,6 +571,20 @@ class MainWindow(QMainWindow):
         else:
             filtered_seismic_data = np.apply_along_axis(
                 lambda trace: self.parser.filter.apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
+                axis=0, arr=self.parser.seismic_data
+            )
+
+        if filter_type == 'notch':
+            print(f"Applying Notch Filter: freq={low_cutoff}, Q=30")
+            filtered_seismic_data = np.apply_along_axis(
+                lambda trace: self.parser.filter.apply_filter(trace, 'notch', cutoff_freqs, self.parser.fs),
+                axis=0, arr=self.parser.seismic_data
+            )
+        if filter_type == 'median':
+            print(f"Applying Median Filter: kernel_size={self.parser.order}")
+            filtered_seismic_data = np.apply_along_axis(
+                lambda trace: self.parser.filter.apply_filter(trace, 'median', cutoff_freqs, self.parser.fs,
+                                                              self.parser.order),
                 axis=0, arr=self.parser.seismic_data
             )
 
