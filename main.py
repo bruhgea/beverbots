@@ -1,3 +1,5 @@
+import gc
+
 import numpy as np
 import matplotlib
 
@@ -32,6 +34,7 @@ from PyQt5.QtWidgets import QScrollBar
 from PyQt5.QtWidgets import QMessageBox
 from scipy.signal import iirnotch, medfilt
 
+import psutil
 
 class GprParser():
     '''
@@ -80,6 +83,7 @@ class GprParser():
         '''
         def __init__(self, parent_parser):
             self.parent = parent_parser
+            self.data = None
 
         # Filtering functions
         def butter_lowpass(self, cutoff, fs, order=5):
@@ -110,11 +114,49 @@ class GprParser():
         def notch_filter(self, freq, fs):
             nyquist = 0.5 * fs
             notch_freq = freq / nyquist
+            if not (0 < notch_freq < 1):
+                raise ValueError(f"Invalid notch frequency: {notch_freq}. Must be between 0 and 1.")
             b, a = iirnotch(notch_freq, Q=30)
             return b, a
+
         def median_filter(self, data, kernel_size):
             return medfilt(data, kernel_size)
 
+        def apply_notch_filter(self, data, freq, fs):
+            # Ensure data is 2D
+            if data.ndim != 2:
+                raise ValueError("Data must be a 2D array.")
+
+            if np.any(np.isnan(data)) or np.any(np.isinf(data)):
+                data = np.nan_to_num(data)
+
+            gc.collect()
+            print(f"Memory usage before filter: {psutil.Process().memory_info().rss / (1024 * 1024)} MB")
+
+            b, a = self.notch_filter(freq, fs)
+
+            filtered_data = np.zeros_like(data)
+
+            # Apply filter to each row
+            for i in range(data.shape[0]):
+                try:
+                    filtered_data[i, :] = lfilter(b, a, data[i, :])
+                except Exception as e:
+                    print(f"Error applying lfilter to row {i}: {e}")
+                    raise
+
+            # Apply filtfilt for each chunk if necessary
+            chunk_size = 100  # Adjust as needed
+            for start in range(0, data.shape[1], chunk_size):
+                end = min(start + chunk_size, data.shape[1])
+                try:
+                    for i in range(data.shape[0]):  # Apply filtfilt row-by-row
+                        filtered_data[i, start:end] = filtfilt(b, a, data[i, start:end], axis=0)
+                except Exception as e:
+                    print(f"Error processing chunk {start}-{end}: {e}")
+                    raise
+
+            return filtered_data
 
         def apply_filter(self, data, filter_type, cutoff_freqs, fs, order=5):
             if filter_type == 'lowpass':
@@ -131,8 +173,7 @@ class GprParser():
                 sigma = order  # Use order as sigma for Gaussian
                 return gaussian_filter1d(data, sigma=sigma, mode='nearest')
             elif filter_type == 'notch':
-                b, a = self.notch_filter(cutoff_freqs[0], fs)
-                return filtfilt(b, a, data)
+                return self.apply_notch_filter(data, cutoff_freqs[0], fs)
             elif filter_type == 'median':
                 kernel_size = order  # Use `order` as kernel size
                 if kernel_size % 2 == 0:
