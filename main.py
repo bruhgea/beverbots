@@ -77,6 +77,8 @@ class GprParser():
         self.filter = self.GprFilter(self)
 
     #   TODO
+    # TODO: be able to apply filters on top of each other + reset to original data or go back button
+    # TODO: configuration file for default filter settings
     class GprFilter:
         '''
         inner class for filtering data
@@ -98,11 +100,16 @@ class GprParser():
             b, a = butter(order, normal_cutoff, btype='highpass', analog=False)
             return b, a
 
-
+#TODO fix bandpass
         def butter_bandpass(self, lowcut, highcut, fs, order=5):
             nyquist = 0.5 * fs
             low = lowcut / nyquist
             high = highcut / nyquist
+
+            # Ensure low < high
+            if low >= high:
+                raise ValueError(f"Low cutoff ({lowcut} Hz) must be less than high cutoff ({highcut} Hz)")
+
             b, a = butter(order, [low, high], btype='bandpass')
             return b, a
         
@@ -159,39 +166,57 @@ class GprParser():
             return filtered_data
 
         def apply_filter(self, data, filter_type, cutoff_freqs, fs, order=5):
-            if filter_type == 'lowpass':
-                b, a = self.butter_lowpass(cutoff_freqs[0], fs, order=order)
-            elif filter_type == 'highpass':
-                b, a = self.butter_highpass(cutoff_freqs[0], fs, order=order)
-            elif filter_type == 'bandpass':
-                if len(cutoff_freqs) != 2 or cutoff_freqs[0] >= cutoff_freqs[1]:
-                    raise ValueError("For bandpass filter, cutoff_freqs should contain two values: [lowcut, highcut]")
-                b, a = self.butter_bandpass(cutoff_freqs[0], cutoff_freqs[1], fs, order=order)
-            elif filter_type == 'moving_average':
-                return self.moving_average(data, order)  # window size is `order`
-            elif filter_type == 'gaussian':
-                sigma = order  # Use order as sigma for Gaussian
-                return gaussian_filter1d(data, sigma=sigma, mode='nearest')
-            elif filter_type == 'notch':
-                return self.apply_notch_filter(data, cutoff_freqs[0], fs)
-            elif filter_type == 'median':
-                kernel_size = order  # Use `order` as kernel size
-                if kernel_size % 2 == 0:
-                    kernel_size += 1  # Ensure odd kernel size
-                return self.median_filter(data, kernel_size)
-            else:
-                raise ValueError("Unknown filter type. Choose from 'lowpass', 'highpass', or 'bandpass'.")
+            # Add error handling and input validation
+            if not isinstance(data, np.ndarray):
+                raise ValueError("Input data must be a NumPy array")
 
-            # Apply the filter
-            filtered_data = filtfilt(b, a, data)
+            if data.size == 0:
+                raise ValueError("Input data array is empty")
 
-            # Adjust length to match original data
-            if len(filtered_data) > len(data):
-                filtered_data = filtered_data[:len(data)]
-            elif len(filtered_data) < len(data):
-                filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)), mode='constant')
+            try:
+                if filter_type == 'lowpass':
+                    b, a = self.butter_lowpass(cutoff_freqs[0], fs, order=order)
+                elif filter_type == 'highpass':
+                    b, a = self.butter_highpass(cutoff_freqs[0], fs, order=order)
+                elif filter_type == 'bandpass':
+                    # Ensure two cutoff frequencies are provided
+                    if len(cutoff_freqs) != 2:
+                        raise ValueError("Bandpass filter requires two cutoff frequencies: [lowcut, highcut]")
+                    lowcut, highcut = cutoff_freqs
+                    b, a = self.butter_bandpass(lowcut, highcut, fs, order=order)
+                elif filter_type == 'moving_average':
+                    return self.moving_average(data, order)  # window size is `order`
+                elif filter_type == 'gaussian':
+                    sigma = order  # Use order as sigma for Gaussian
+                    return gaussian_filter1d(data, sigma=sigma, mode='nearest')
+                elif filter_type == 'notch':
+                    return self.apply_notch_filter(data, cutoff_freqs[0], fs)
+                elif filter_type == 'median':
+                    kernel_size = order  # Use `order` as kernel size
+                    if kernel_size % 2 == 0:
+                        kernel_size += 1  # Ensure odd kernel size
+                    return self.median_filter(data, kernel_size)
+                else:
+                    raise ValueError("Unknown filter type")
 
-            return filtered_data
+                # Handle potential NaN or Inf values
+                if np.any(np.isnan(data)) or np.any(np.isinf(data)):
+                    data = np.nan_to_num(data)
+
+                # Apply the filter
+                filtered_data = filtfilt(b, a, data)
+
+                # Ensure output matches input length
+                if len(filtered_data) > len(data):
+                    filtered_data = filtered_data[:len(data)]
+                elif len(filtered_data) < len(data):
+                    filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)), mode='constant')
+
+                return filtered_data
+
+            except Exception as e:
+                print(f"Error applying {filter_type} filter: {e}")
+                return data  # Return original data if filter fails
 
 
 class MplCanvas(FigureCanvasQTAgg):
@@ -335,6 +360,10 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
+        # self.cutoff_freqs = [50]  # Default cutoff frequency
+        # self.order = 5  # Default filter order
+        # self.cutoff_input_high = 50  # Default high cutoff frequency
+        # self.cutoff_input_low = 30  # Default low cutoff frequency
 
     def init_ui(self):
 
@@ -558,78 +587,125 @@ class MainWindow(QMainWindow):
         '''
         Apply the selected filter to the data and re-plot
         '''
-        if self.parser is None:
-            msg1 = QMessageBox()
-            msg1.setWindowTitle("Error")
-            msg1.setText("No data loaded to apply filter!")
-            msg1.setIcon(QMessageBox.Critical)
-            msg1.setStandardButtons(QMessageBox.Ok)
-            msg1.exec_()
-            return
-        else:
-            print(f"Data ready for filtering. Shape: {self.parser.seismic_data.shape}, fs: {self.parser.fs}")
 
-        filter_type = self.filter_box.currentText().lower()
+        try:
+            if self.parser is None:
+                msg1 = QMessageBox()
+                msg1.setWindowTitle("Error")
+                msg1.setText("No data loaded to apply filter!")
+                msg1.setIcon(QMessageBox.Critical)
+                msg1.setStandardButtons(QMessageBox.Ok)
+                msg1.exec_()
+                return
+            else:
+                print(f"Data ready for filtering. Shape: {self.parser.seismic_data.shape}, fs: {self.parser.fs}")
 
-        # Get cutoff frequencies from input boxes
+            filter_type = self.filter_box.currentText().lower()
 
-        low = self.cutoff_input_low.text()
-        high = self.cutoff_input_high.text()
+            # Get cutoff frequencies from input boxes
 
-        msg = QMessageBox()
-        msg.setWindowTitle("Error")
-        msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
-        msg.setIcon(QMessageBox.Critical)
-        msg.setStandardButtons(QMessageBox.Ok)
+            low = self.cutoff_input_low.text()
+            high = self.cutoff_input_high.text()
 
-        if low == '':
-            msg.exec_()
-            return
-        if high == '' and filter_type == 'bandpass':
-            msg.exec_()
-            return
+            print(f"Filter type: {filter_type}, low: {low}, high: {high}")
 
-        low_cutoff = float(self.cutoff_input_low.text())
-        high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
+            if not low:
+                raise ValueError("Please set lowcut frequency")
 
-        if filter_type == 'none':
-            print("No filter selected")
-            self.plot_radargram(self.parser.seismic_data, "Radargram (Original Data)")
-            return
+            msg = QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
+            msg.setIcon(QMessageBox.Critical)
+            msg.setStandardButtons(QMessageBox.Ok)
 
-        if filter_type == 'bandpass':
-            cutoff_freqs = [low_cutoff, high_cutoff]
-        else:
-            cutoff_freqs = [low_cutoff]
+            if low == '':
+                msg.exec_()
+                return
+            if high == '' and filter_type == 'bandpass':
+                msg.exec_()
+                return
 
-        # Apply the filter
-        if filter_type == 'moving_average':
-            window_size = self.parser.order  # Use order as the window size for moving average
-            filtered_seismic_data = np.apply_along_axis(
-                lambda trace: self.parser.filter.moving_average(trace, window_size),
-                axis=0, arr=self.parser.seismic_data
-            )
-        else:
-            filtered_seismic_data = np.apply_along_axis(
-                lambda trace: self.parser.filter.apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
-                axis=0, arr=self.parser.seismic_data
-            )
+            low_cutoff = float(self.cutoff_input_low.text())
+            high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
 
-        if filter_type == 'notch':
-            print(f"Applying Notch Filter: freq={low_cutoff}, Q=30")
-            filtered_seismic_data = np.apply_along_axis(
-                lambda trace: self.parser.filter.apply_filter(trace, 'notch', cutoff_freqs, self.parser.fs),
-                axis=0, arr=self.parser.seismic_data
-            )
-        if filter_type == 'median':
-            print(f"Applying Median Filter: kernel_size={self.parser.order}")
-            filtered_seismic_data = np.apply_along_axis(
-                lambda trace: self.parser.filter.apply_filter(trace, 'median', cutoff_freqs, self.parser.fs,
-                                                              self.parser.order),
-                axis=0, arr=self.parser.seismic_data
-            )
+            if filter_type == 'none':
+                print("No filter selected")
+                self.plot_radargram(self.parser.seismic_data, "Radargram (Original Data)")
+                return
 
-        self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
+                # Validate cutoff frequencies
+            if low_cutoff <= 0 or (high_cutoff is not None and high_cutoff <= 0):
+                raise ValueError("Cutoff frequencies must be positive")
+
+                # Validate against Nyquist frequency
+            nyquist = 0.5 * self.parser.fs
+            if low_cutoff > nyquist or (high_cutoff and high_cutoff > nyquist):
+                raise ValueError(f"Cutoff frequency must be less than Nyquist frequency ({nyquist} Hz)")
+
+            if filter_type == 'bandpass':
+                # Validate both low and high cutoff frequencies
+                if not low or not high:
+                    raise ValueError("Both low and high cutoff frequencies are required for bandpass filter")
+
+                low_cutoff = float(low)
+                high_cutoff = float(high)
+
+                # Ensure low cutoff is less than high cutoff
+                if low_cutoff >= high_cutoff:
+                    raise ValueError("Low cutoff frequency must be less than high cutoff frequency")
+
+                cutoff_freqs = [low_cutoff, high_cutoff]
+            else:
+                cutoff_freqs = [low_cutoff]
+
+            filtered_seismic_data = np.zeros_like(self.parser.seismic_data)
+            for i in range(self.parser.seismic_data.shape[1]):
+                try:
+                    filtered_seismic_data[:, i] = self.parser.filter.apply_filter(
+                        self.parser.seismic_data[:, i],
+                        filter_type,
+                        cutoff_freqs,
+                        self.parser.fs,
+                        self.parser.order
+                    )
+                except Exception as trace_filter_error:
+                    print(f"Error filtering trace {i}: {trace_filter_error}")
+                    # Use original trace if filtering fails
+                    filtered_seismic_data[:, i] = self.parser.seismic_data[:, i]
+
+            # # Apply the filter
+            # if filter_type == 'moving_average':
+            #     window_size = self.parser.order  # Use order as the window size for moving average
+            #     filtered_seismic_data = np.apply_along_axis(
+            #         lambda trace: self.parser.filter.moving_average(trace, window_size),
+            #         axis=0, arr=self.parser.seismic_data
+            #     )
+            # else:
+            #     filtered_seismic_data = np.apply_along_axis(
+            #         lambda trace: self.parser.filter.apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
+            #         axis=0, arr=self.parser.seismic_data
+            #     )
+            #
+            # if filter_type == 'notch':
+            #     print(f"Applying Notch Filter: freq={low_cutoff}, Q=30")
+            #     filtered_seismic_data = np.apply_along_axis(
+            #         lambda trace: self.parser.filter.apply_filter(trace, 'notch', cutoff_freqs, self.parser.fs),
+            #         axis=0, arr=self.parser.seismic_data
+            #     )
+            # if filter_type == 'median':
+            #     print(f"Applying Median Filter: kernel_size={self.parser.order}")
+            #     filtered_seismic_data = np.apply_along_axis(
+            #         lambda trace: self.parser.filter.apply_filter(trace, 'median', cutoff_freqs, self.parser.fs,
+            #                                                       self.parser.order),
+            #         axis=0, arr=self.parser.seismic_data
+            #     )
+
+            self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
+
+        except ValueError as ve:
+            QMessageBox.critical(self, "Input Error", str(ve))
+        except Exception as e:
+            QMessageBox.critical(self, "Filtering Error", f"An unexpected error occurred: {e}")
 
     def update_filtered_plot(self, filtered_seismic_data):
         # Re-plot the filtered radargram
