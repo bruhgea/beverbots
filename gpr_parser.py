@@ -67,7 +67,6 @@ class GprParser():
         #   apply exponential gain to dataset
         self.seismic_data = np.multiply(np.sign(self.seismic_data), np.abs(self.seismic_data))**exp_factor
         
-    # TODO: be able to apply filters on top of each other + reset to original data or go back button
     # TODO: configuration file for default filter settings
     class GprFilter:
         '''
@@ -90,7 +89,6 @@ class GprParser():
             b, a = butter(order, normal_cutoff, btype='highpass', analog=False)
             return b, a
 
-#TODO fix bandpass
         def butter_bandpass(self, lowcut, highcut, fs, order=5):
             nyquist = 0.5 * fs
             low = lowcut / nyquist

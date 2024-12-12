@@ -323,31 +323,6 @@ class MainWindow(QMainWindow):
                                       self.mpl_canvas.axes.get_ylim()[1] / 0.9)
         self.mpl_canvas.draw()
 
-    # def update_view(self):
-    #     # Update plot limits based on current x and y limits
-    #     self.mpl_canvas.axes.set_xlim(self.current_xlim)
-    #     self.mpl_canvas.axes.set_ylim(self.current_ylim)
-    #     self.mpl_canvas.draw()
-    #
-    #     # Adjust scroll bar ranges and positions based on current view
-    #     self.h_scroll.setRange(int(self.initial_xlim[0]),
-    #                            int(self.initial_xlim[1] - (self.current_xlim[1] - self.current_xlim[0])))
-    #     self.v_scroll.setRange(int(self.initial_ylim[0]),
-    #                            int(self.initial_ylim[1] - (self.current_ylim[1] - self.current_ylim[0])))
-    #     self.h_scroll.setPageStep(int(self.current_xlim[1] - self.current_xlim[0]))
-    #     self.v_scroll.setPageStep(int(self.current_ylim[1] - self.current_ylim[0]))
-    #
-    # def update_xlim(self, value):
-    #     # Update the x-axis limits based on the scroll bar position
-    #     new_xlim = (value, value + (self.current_xlim[1] - self.current_xlim[0]))
-    #     self.current_xlim = new_xlim
-    #     self.update_view()
-    #
-    # def update_ylim(self, value):
-    #     # Update the y-axis limits based on the scroll bar position
-    #     new_ylim = (value, value + (self.current_ylim[1] - self.current_ylim[0]))
-    #     self.current_ylim = new_ylim
-    #     self.update_view()
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
         if self.parser.seismic_data is not None:
@@ -443,19 +418,6 @@ class MainWindow(QMainWindow):
                                      "Please set both lowcut and highcut frequencies for bandpass filter")
                 return
 
-            # msg = QMessageBox()
-            # msg.setWindowTitle("Error")
-            # msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
-            # msg.setIcon(QMessageBox.Critical)
-            # msg.setStandardButtons(QMessageBox.Ok)
-            #
-            # if low == '':
-            #     msg.exec_()
-            #     return
-            # if high == '' and filter_type == 'bandpass':
-            #     msg.exec_()
-            #     return
-
             low_cutoff = float(self.cutoff_input_low.text())
             high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
 
@@ -494,19 +456,6 @@ class MainWindow(QMainWindow):
                 cutoff_freqs = [low_cutoff, high_cutoff]
             else:
                 cutoff_freqs = [low_cutoff]
-
-            # filter_data = self.parser.seismic_data.copy()
-            #
-            # # Apply the chosen filter
-            # filtered_seismic_data = self.parser.filter.apply_filter_stack(
-            #     filter_data,
-            #     filter_type,
-            #     cutoff_freqs,
-            #     self.parser.fs,
-            #     self.parser.order
-            # )
-
-            # filtered_seismic_data = np.zeros_like(self.parser.seismic_data)
 
             filtered_seismic_data = self.parser.seismic_data.copy()
 
