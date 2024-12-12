@@ -69,14 +69,21 @@ class GprParser():
         
         # Create the time axis (assuming uniform sample interval)
         self.sample_interval = self.segy_stream[0].stats.delta  # sample interval in seconds
-        self.fs = self.segy_stream[0].stats.sampling_rate       # samoke freq in Hz
+        self.fs = self.segy_stream[0].stats.sampling_rate       # sample freq in Hz
 
         self.time_axis = np.arange(0, self.samples_num * self.sample_interval, self.sample_interval)
 
         # init filter instance
         self.filter = self.GprFilter(self)
 
-    #   TODO
+    #   gain
+    def apply_gain(self, gain_db):
+        exp_factor = 10**(gain_db/20)
+        #   DEBUG
+        print(f'apply_gain() called, gain_db = {gain_db}, exp_factor = {exp_factor}')
+        #   apply exponential gain to dataset
+        self.seismic_data = np.multiply(np.sign(self.seismic_data), np.abs(self.seismic_data))**exp_factor
+        
     class GprFilter:
         '''
         inner class for filtering data
@@ -288,42 +295,31 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.axhline(y=latY, color='blue', linestyle='--', linewidth=1)
         self.draw()
 
-class GainWidget(FigureCanvasQTAgg):
+class GainWidget(QWidget):
     '''
     separate obj for gain widget
     '''
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
+    def __init__(self, parent=None):
+        super().__init__()
         self.parent = parent
-        self.dragging_point = None
-
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
-        super(GainWidget, self).__init__(fig)
-        self.axes.set_xlabel('Gain [dB]')
-        self.axes.set_ylabel('Time [ns]')
-        self.axes.yaxis.label.set_rotation(90)
-        self.axes.set_title('Gain Function')
-        secax = self.axes.secondary_xaxis('top')
-        secax.set_xlabel('Attenuation[dB]')
-        #   change axis direction
-        self.axes.invert_yaxis()
-        #self.axes.set_ylim(0)
+        self.layout = QVBoxLayout()
         
-        #   initial positions
-        self.point_positions = [[0, 0], [0, 0]]
+        self.gain_input = QLineEdit(self)
+        self.gain_input.setPlaceholderText('Gain [dB]')
 
-        # Add points to the plot
-        self.points = [
-            self.axes.plot(x, y, 'ro', picker=5)[0]  # Red points with pick radius of 5
-            for x, y in self.point_positions
-        ]
-    
-    # TODO
-    def plot_data(self):
-        '''
-        refreshes the widget, should be called when new .sgy file is opened
-        '''
-        self.axes.clear()
+        self.gain_button = QPushButton('Apply gain', self)
+        self.gain_button.clicked.connect(self.gain_button_clicked)
+
+        self.layout.addWidget(self.gain_input)
+        self.layout.addWidget(self.gain_button)
+
+        self.setLayout(self.layout)
+
+    def gain_button_clicked(self):
+        gain_db = float(self.gain_input.text())
+        self.parent.parser.apply_gain(gain_db)
+        self.parent.plot_radargram(self.parent.parser.seismic_data, 'gain applied!')
+
 
 class MainWindow(QMainWindow):
     '''
@@ -418,7 +414,7 @@ class MainWindow(QMainWindow):
         self.mpl_gps_canvas = MplGpsCanvas(self, width=5, height=4)
 
         #   gain function
-        self.gain_widget = GainWidget(self, width=4)
+        self.gain_widget = GainWidget(self)
 
         # Add all widgets to the layout
         # layout.addWidget(self.scroll_area, 0, 0)  # Use scroll area for the canvas
@@ -432,7 +428,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.reset_zoom_btn, 7, 0)
         layout.addWidget(self.file_btn, 8, 0)
         layout.addWidget(self.mpl_gps_canvas, 0, 1)
-        layout.addWidget(self.gain_widget, 1, 1, 6, 1, Qt.AlignRight)
+        layout.addWidget(self.gain_widget, 1, 1, 7, 1, Qt.AlignRight)
 
         self.central_widget.setLayout(layout)
 
@@ -533,6 +529,7 @@ class MainWindow(QMainWindow):
         '''
         Helper function to plot radargram on the canvas
         '''
+        print('plot_radargram called!')
         self.mpl_canvas.axes.clear()
         self.mpl_canvas.axes.imshow(data, aspect='auto', cmap=self.color_scheme)
         self.mpl_canvas.axes.set_title(title)
