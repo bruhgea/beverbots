@@ -48,6 +48,17 @@ class GprParser():
         # init filter instance
         self.filter = self.GprFilter(self)
 
+        # Store the original, unmodified seismic data
+        self.original_seismic_data = self.seismic_data.copy()
+
+        # List to track applied filters and gains
+        self.applied_modifications = []
+
+    def reset_data(self):
+        """Reset seismic data to original state"""
+        self.seismic_data = self.original_seismic_data.copy()
+        self.applied_modifications = []
+
     #   gain
     def apply_gain(self, gain_db):
         exp_factor = 10**(gain_db/20)
@@ -196,3 +207,21 @@ class GprParser():
             except Exception as e:
                 print(f"Error applying {filter_type} filter: {e}")
                 return data  # Return original data if filter fails
+
+        def apply_filter_stack(self, data, filter_type, cutoff_freqs, fs, order=5):
+            """Apply a filter to the current data and log the modification"""
+            try:
+                filtered_data = self.apply_filter(data, filter_type, cutoff_freqs, fs, order)
+
+                # Store the modification for tracking
+                self.parent.applied_modifications.append({
+                    'type': 'filter',
+                    'filter_type': filter_type,
+                    'cutoff_freqs': cutoff_freqs,
+                    'order': order
+                })
+
+                return filtered_data
+            except Exception as e:
+                print(f"Error in filter stack: {e}")
+                return data

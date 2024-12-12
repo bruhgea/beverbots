@@ -12,8 +12,10 @@ from matplotlib.figure import Figure
 from scipy import ndimage as ndi
 from shutil import copyfile
 from skimage import exposure
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QGridLayout, QHBoxLayout, QSpinBox
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
+    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QGridLayout, QHBoxLayout, QSpinBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
+    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
 from obspy.io.segy.segy import SEGYFile
@@ -24,7 +26,6 @@ import sys
 import struct
 from matplotlib.lines import Line2D
 import matplotlib.patches as patches
-
 
 from scipy.signal import butter, lfilter
 from PyQt5.QtWidgets import QLineEdit
@@ -43,6 +44,7 @@ class MplCanvas(FigureCanvasQTAgg):
     '''
     separate obj for plot widget
     '''
+
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.parent = parent
         fig = Figure(figsize=(width, height), dpi=dpi)
@@ -73,7 +75,6 @@ class MplCanvas(FigureCanvasQTAgg):
         lonX, latY = self.parent.parser.trace_coordinates[:, trace_number]
         self.parent.mpl_gps_canvas.show_current_location(lonX, latY)
 
-        
         self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
         self.draw()
         self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
@@ -91,14 +92,16 @@ class MplCanvas(FigureCanvasQTAgg):
         self.axes.set_xlim([xlim[0], xlim[0] + x_range])
         self.axes.set_ylim([ylim[0], ylim[0] + y_range])
         self.draw()
-    
+
     def parent(self):
         return self.parent
+
 
 class MplGpsCanvas(FigureCanvasQTAgg):
     '''
     coordinates widget
     '''
+
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.parent = parent
         fig = Figure(figsize=(width, height), dpi=dpi)
@@ -133,15 +136,17 @@ class MplGpsCanvas(FigureCanvasQTAgg):
         self.axes.axhline(y=latY, color='blue', linestyle='--', linewidth=1)
         self.draw()
 
+
 class GainWidget(QWidget):
     '''
     separate obj for gain widget
     '''
+
     def __init__(self, parent=None):
         super().__init__()
         self.parent = parent
         self.layout = QVBoxLayout()
-        
+
         self.gain_input = QLineEdit(self)
         self.gain_input.setPlaceholderText('Gain [dB]')
 
@@ -193,7 +198,8 @@ class MainWindow(QMainWindow):
 
         #   dropdown menu to select filter
         self.filter_box = QComboBox()
-        self.filter_box.addItems(['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian', 'notch', 'median'])
+        self.filter_box.addItems(
+            ['None', 'lowpass', 'highpass', 'bandpass', 'moving_average', 'gaussian', 'notch', 'median'])
         self.filter_box.currentTextChanged.connect(self.on_filter_change)
 
         # Color scheme selection
@@ -213,7 +219,6 @@ class MainWindow(QMainWindow):
         # Matplotlib FigureCanvas and toolbar for zoom/pan
         self.mpl_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         self.toolbar = NavigationToolbar2QT(self.mpl_canvas, self)
-
 
         # Input fields for cutoff frequencies
         self.cutoff_input_low = QLineEdit()
@@ -247,6 +252,10 @@ class MainWindow(QMainWindow):
         self.reset_zoom_btn = QPushButton("Reset Zoom")
         self.reset_zoom_btn.clicked.connect(self.reset_zoom)
 
+        # Add Reset Data Button
+        self.reset_data_btn = QPushButton("Reset Data")
+        self.reset_data_btn.clicked.connect(self.reset_data)
+
         # Wrap the canvas in a scroll area
         # self.scroll_area = QScrollArea()
         # self.scroll_area.setWidget(self.mpl_canvas)
@@ -269,10 +278,20 @@ class MainWindow(QMainWindow):
         layout.addLayout(self.zoom_controls_layout, 6, 0)
         layout.addWidget(self.reset_zoom_btn, 7, 0)
         layout.addWidget(self.file_btn, 8, 0)
+        layout.addWidget(self.reset_data_btn, 9, 0)
         layout.addWidget(self.mpl_gps_canvas, 0, 1)
         layout.addWidget(self.gain_widget, 1, 1, 7, 1, Qt.AlignRight)
 
         self.central_widget.setLayout(layout)
+
+    def reset_data(self):
+        """Reset the data and plot to original state"""
+        if self.parser is not None:
+            # Reset the data
+            self.parser.reset_data()
+
+            # Re-plot the original radargram
+            self.plot_radargram(self.parser.seismic_data, "Original Radargram (Reset)")
 
     def reset_zoom(self):
         """Reset the zoom level to the original limits."""
@@ -350,7 +369,7 @@ class MainWindow(QMainWindow):
         if (len(self.file_path) == 0):
             return
         print(f'opened file {self.file_path}')
-        
+
         # init Gpr parser
         self.parser = GprParser(self.file_path)
         self.plot_radargram(self.parser.seismic_data, "Radargram (Seismic Section)")
@@ -390,7 +409,7 @@ class MainWindow(QMainWindow):
     #     self.cutoff_freqs = [self.cutoff_slider.value()]
 
     def update_order(self):
-        if self.parser != None:     #   ignore if parser not initialized
+        if self.parser != None:  # ignore if parser not initialized
             self.parser.order = self.order_spinbox.value()
 
     def filter_btn_clicked(self):
@@ -400,12 +419,8 @@ class MainWindow(QMainWindow):
 
         try:
             if self.parser is None:
-                msg1 = QMessageBox()
-                msg1.setWindowTitle("Error")
-                msg1.setText("No data loaded to apply filter!")
-                msg1.setIcon(QMessageBox.Critical)
-                msg1.setStandardButtons(QMessageBox.Ok)
-                msg1.exec_()
+                QMessageBox.critical(self, "Error", "No data loaded to apply filter!")
+
                 return
             else:
                 print(f"Data ready for filtering. Shape: {self.parser.seismic_data.shape}, fs: {self.parser.fs}")
@@ -420,20 +435,26 @@ class MainWindow(QMainWindow):
             print(f"Filter type: {filter_type}, low: {low}, high: {high}")
 
             if not low:
-                raise ValueError("Please set lowcut frequency")
-
-            msg = QMessageBox()
-            msg.setWindowTitle("Error")
-            msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
-            msg.setIcon(QMessageBox.Critical)
-            msg.setStandardButtons(QMessageBox.Ok)
-
-            if low == '':
-                msg.exec_()
+                QMessageBox.critical(self, "Error", "Please set lowcut frequency")
                 return
+
             if high == '' and filter_type == 'bandpass':
-                msg.exec_()
+                QMessageBox.critical(self, "Error",
+                                     "Please set both lowcut and highcut frequencies for bandpass filter")
                 return
+
+            # msg = QMessageBox()
+            # msg.setWindowTitle("Error")
+            # msg.setText("Please set both lowcut and highcut\nfrequencies for the bandpass filter.")
+            # msg.setIcon(QMessageBox.Critical)
+            # msg.setStandardButtons(QMessageBox.Ok)
+            #
+            # if low == '':
+            #     msg.exec_()
+            #     return
+            # if high == '' and filter_type == 'bandpass':
+            #     msg.exec_()
+            #     return
 
             low_cutoff = float(self.cutoff_input_low.text())
             high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
@@ -445,33 +466,53 @@ class MainWindow(QMainWindow):
 
                 # Validate cutoff frequencies
             if low_cutoff <= 0 or (high_cutoff is not None and high_cutoff <= 0):
-                raise ValueError("Cutoff frequencies must be positive")
+                QMessageBox.critical(self, "Error", "Cutoff frequencies must be positive")
+                return
 
                 # Validate against Nyquist frequency
             nyquist = 0.5 * self.parser.fs
             if low_cutoff > nyquist or (high_cutoff and high_cutoff > nyquist):
-                raise ValueError(f"Cutoff frequency must be less than Nyquist frequency ({nyquist} Hz)")
+                QMessageBox.critical(self, "Error",
+                                     f"Cutoff frequency must be less than Nyquist frequency ({nyquist} Hz)")
+                return
 
             if filter_type == 'bandpass':
                 # Validate both low and high cutoff frequencies
                 if not low or not high:
-                    raise ValueError("Both low and high cutoff frequencies are required for bandpass filter")
+                    QMessageBox.critical(self, "Error",
+                                         "Both low and high cutoff frequencies are required for bandpass filter")
+                    return
 
                 low_cutoff = float(low)
                 high_cutoff = float(high)
 
                 # Ensure low cutoff is less than high cutoff
                 if low_cutoff >= high_cutoff:
-                    raise ValueError("Low cutoff frequency must be less than high cutoff frequency")
+                    QMessageBox.critical(self, "Error", "Low cutoff frequency must be less than high cutoff frequency")
+                    return
 
                 cutoff_freqs = [low_cutoff, high_cutoff]
             else:
                 cutoff_freqs = [low_cutoff]
 
-            filtered_seismic_data = np.zeros_like(self.parser.seismic_data)
+            # filter_data = self.parser.seismic_data.copy()
+            #
+            # # Apply the chosen filter
+            # filtered_seismic_data = self.parser.filter.apply_filter_stack(
+            #     filter_data,
+            #     filter_type,
+            #     cutoff_freqs,
+            #     self.parser.fs,
+            #     self.parser.order
+            # )
+
+            # filtered_seismic_data = np.zeros_like(self.parser.seismic_data)
+
+            filtered_seismic_data = self.parser.seismic_data.copy()
+
             for i in range(self.parser.seismic_data.shape[1]):
                 try:
-                    filtered_seismic_data[:, i] = self.parser.filter.apply_filter(
+                    filtered_seismic_data[:, i] = self.parser.filter.apply_filter_stack(
                         self.parser.seismic_data[:, i],
                         filter_type,
                         cutoff_freqs,
@@ -483,32 +524,7 @@ class MainWindow(QMainWindow):
                     # Use original trace if filtering fails
                     filtered_seismic_data[:, i] = self.parser.seismic_data[:, i]
 
-            # # Apply the filter
-            # if filter_type == 'moving_average':
-            #     window_size = self.parser.order  # Use order as the window size for moving average
-            #     filtered_seismic_data = np.apply_along_axis(
-            #         lambda trace: self.parser.filter.moving_average(trace, window_size),
-            #         axis=0, arr=self.parser.seismic_data
-            #     )
-            # else:
-            #     filtered_seismic_data = np.apply_along_axis(
-            #         lambda trace: self.parser.filter.apply_filter(trace, filter_type, cutoff_freqs, self.parser.fs, self.parser.order),
-            #         axis=0, arr=self.parser.seismic_data
-            #     )
-            #
-            # if filter_type == 'notch':
-            #     print(f"Applying Notch Filter: freq={low_cutoff}, Q=30")
-            #     filtered_seismic_data = np.apply_along_axis(
-            #         lambda trace: self.parser.filter.apply_filter(trace, 'notch', cutoff_freqs, self.parser.fs),
-            #         axis=0, arr=self.parser.seismic_data
-            #     )
-            # if filter_type == 'median':
-            #     print(f"Applying Median Filter: kernel_size={self.parser.order}")
-            #     filtered_seismic_data = np.apply_along_axis(
-            #         lambda trace: self.parser.filter.apply_filter(trace, 'median', cutoff_freqs, self.parser.fs,
-            #                                                       self.parser.order),
-            #         axis=0, arr=self.parser.seismic_data
-            #     )
+            self.parser.seismic_data = filtered_seismic_data
 
             self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
 
@@ -520,7 +536,7 @@ class MainWindow(QMainWindow):
     def update_filtered_plot(self, filtered_seismic_data):
         # Re-plot the filtered radargram
         self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({self.filter_box.currentText()} Filter)")
-    
+
 
 def main():
     app = QApplication(sys.argv)
