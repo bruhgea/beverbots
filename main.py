@@ -161,7 +161,7 @@ class GainWidget(QWidget):
     def gain_button_clicked(self):
         gain_db = float(self.gain_input.text())
         self.parent.parser.apply_gain(gain_db)
-        self.parent.plot_radargram(self.parent.parser.seismic_data, 'gain applied!')
+        self.parent.update_radargram('Gain applied!')
 
 
 class MainWindow(QMainWindow):
@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
             self.parser.reset_data()
 
             # Re-plot the original radargram
-            self.plot_radargram(self.parser.seismic_data, "Original Radargram (Reset)")
+            self.update_radargram("Original Radargram (Reset)")
 
     def reset_zoom(self):
         """Reset the zoom level to the original limits."""
@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
         if self.parser.seismic_data is not None:
-            self.plot_radargram(self.parser.seismic_data, "Radargram with Color Scheme")
+            self.update_radargram("Radargram with Color Scheme")
 
     def on_filter_change(self, text):
         # Show/hide the high cutoff input based on the selected filter
@@ -347,7 +347,8 @@ class MainWindow(QMainWindow):
 
         # init Gpr parser
         self.parser = GprParser(self.file_path)
-        self.plot_radargram(self.parser.seismic_data, "Radargram (Seismic Section)")
+        #self.plot_radargram(self.parser.seismic_data, "Radargram (Seismic Section)")
+        self.update_radargram('zz')
         # plot the radargram
         # self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
         # #self.mpl_canvas.axes.colorbar(label="Amplitude")
@@ -361,24 +362,29 @@ class MainWindow(QMainWindow):
         lonX, latY = self.parser.trace_coordinates
         self.mpl_gps_canvas.plot_coordinates(lonX, latY)
 
-    def plot_radargram(self, data, title):
+    def update_radargram(self, title):
         '''
-        Helper function to plot radargram on the canvas
+        Plot data from parser on canvas
         '''
-        print('plot_radargram called!')
-        self.mpl_canvas.axes.clear()
-        self.mpl_canvas.axes.imshow(data, aspect='auto', cmap=self.color_scheme)
-        self.mpl_canvas.axes.set_title(title)
-        self.mpl_canvas.axes.set_xlabel("Trace number")
-        self.mpl_canvas.axes.set_ylabel("Time (s)")
+        if self.parser is None:
+            print('Parser not init')
+            return
+        else:
+            seismic_data = self.parser.seismic_data
+            time_axis = self.parser.time_axis
+            self.mpl_canvas.axes.clear()
 
-        # Store the original limits for the reset function
-        self.mpl_canvas.original_xlim = self.mpl_canvas.axes.get_xlim()
-        self.mpl_canvas.original_ylim = self.mpl_canvas.axes.get_ylim()
+            #   need this to map traces and time axis
+            ext = [0, seismic_data.shape[1], time_axis[-1], time_axis[0]]
 
-        print(f"Original limits set: xlim={self.mpl_canvas.original_xlim}, ylim={self.mpl_canvas.original_ylim}")
+            self.mpl_canvas.axes.imshow(seismic_data, aspect='auto', cmap='seismic', extent=ext)
 
-        self.mpl_canvas.draw()
+            self.mpl_canvas.axes.set_title(title)
+            self.mpl_canvas.axes.set_xlabel("Trace Number")
+            self.mpl_canvas.axes.set_ylabel("Time (ns)")
+            self.mpl_canvas.draw()
+            
+
 
     # def update_cutoff(self):
     #     self.cutoff_freqs = [self.cutoff_slider.value()]
@@ -423,7 +429,7 @@ class MainWindow(QMainWindow):
 
             if filter_type == 'none':
                 print("No filter selected")
-                self.plot_radargram(self.parser.seismic_data, "Radargram (Original Data)")
+                self.update_radargram("Radargram (Original Data)")
                 return
 
                 # Validate cutoff frequencies
@@ -475,7 +481,7 @@ class MainWindow(QMainWindow):
 
             self.parser.seismic_data = filtered_seismic_data
 
-            self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({filter_type.capitalize()} Filter)")
+            self.update_radargram(f"Filtered Radargram ({filter_type.capitalize()} Filter)")
 
         except ValueError as ve:
             QMessageBox.critical(self, "Input Error", str(ve))
@@ -484,7 +490,7 @@ class MainWindow(QMainWindow):
 
     def update_filtered_plot(self, filtered_seismic_data):
         # Re-plot the filtered radargram
-        self.plot_radargram(filtered_seismic_data, f"Filtered Radargram ({self.filter_box.currentText()} Filter)")
+        self.update_radargram(f"Filtered Radargram ({self.filter_box.currentText()} Filter)")
 
 
 def main():

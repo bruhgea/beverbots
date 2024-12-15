@@ -41,9 +41,10 @@ class GprParser():
         
         # Create the time axis (assuming uniform sample interval)
         self.sample_interval = self.segy_stream[0].stats.delta  # sample interval in seconds
+        print(f'sample_interval = {self.sample_interval}')
         self.fs = self.segy_stream[0].stats.sampling_rate       # sample freq in Hz
 
-        self.time_axis = np.arange(0, self.samples_num * self.sample_interval, self.sample_interval)
+        self.time_axis = np.linspace(0, (self.samples_num - 1) * self.sample_interval, self.samples_num)
 
         # init filter instance
         self.filter = self.GprFilter(self)
@@ -65,7 +66,8 @@ class GprParser():
         #   DEBUG
         print(f'apply_gain() called, gain_db = {gain_db}, exp_factor = {exp_factor}')
         #   apply exponential gain to dataset
-        self.seismic_data = np.multiply(np.sign(self.seismic_data), np.abs(self.seismic_data))**exp_factor
+        #self.seismic_data = np.multiply(np.sign(self.seismic_data), np.abs(self.seismic_data))**exp_factor
+        self.seismic_data = self.seismic_data ** exp_factor
         
     # TODO: configuration file for default filter settings
     class GprFilter:
