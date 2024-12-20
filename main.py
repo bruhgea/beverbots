@@ -15,7 +15,7 @@ from skimage import exposure
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
     QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QGridLayout, QHBoxLayout, QSpinBox
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
-    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider
+    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider, QDialog
 from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPointF
 from obspy.io.segy.segy import SEGYFile
@@ -26,6 +26,7 @@ import sys
 import struct
 from matplotlib.lines import Line2D
 import matplotlib.patches as patches
+import matplotlib.colors
 
 from scipy.signal import butter, lfilter
 from PyQt5.QtWidgets import QLineEdit
@@ -47,13 +48,42 @@ class MplCanvas(FigureCanvasQTAgg):
 
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.parent = parent
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
+        self.figure = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = self.figure.add_subplot(111)
+        #   colorbar
+        self.colorbar = None
         #   vertical line to show up when clicked on trace
         self.vertical_line = None
         #   connect event handlers
-        fig.canvas.mpl_connect('button_press_event', self._on_left_click)
-        super(MplCanvas, self).__init__(fig)
+        self.figure.canvas.mpl_connect('button_press_event', self._on_left_click)
+        super(MplCanvas, self).__init__(self.figure)
+
+    def update_radargram(self, seismic_data, time_axis, color_scheme='seismic', title='Radargram'):
+        """
+        Plot seismic data and update the colorbar.
+        """
+        self.axes.clear()  # Clear the previous plot
+        print(f'axes: {self.axes}')
+
+        # Define extent for mapping traces and time axis
+        ext = [0, seismic_data.shape[1], time_axis[-1], time_axis[0]]
+
+        # Plot the seismic data with the specified colormap
+        im = self.axes.imshow(seismic_data, aspect='auto', cmap=color_scheme, extent=ext, origin='upper')
+        im.set_clim(seismic_data.min(), seismic_data.max())
+
+        if self.colorbar is not None:
+            #   for some reason self.colorbar.remove() doesnt work
+            self.colorbar.mappable = im
+        else:
+            self.colorbar = self.figure.colorbar(im, ax=self.axes, orientation='vertical', label='Amplitude (s)')
+
+        self.colorbar.update_ticks()
+        self.axes.set_title(title)
+        self.axes.set_xlabel("Trace Number")
+        self.axes.set_ylabel("Time (s)")
+
+        self.draw()
 
     #   click event handler (show vertical line)
     def _on_left_click(self, event):
@@ -76,8 +106,9 @@ class MplCanvas(FigureCanvasQTAgg):
         self.parent.mpl_gps_canvas.show_current_location(lonX, latY)
 
         self.vertical_line = self.axes.axvline(trace_number, color='r', linestyle='-')
+
         self.draw()
-        self.parent.mpl_toolbar.set_message(f'Trace#{trace_number} Time[ns]: {trace_number}')
+
 
     def wheelEvent(self, event):
         """Handle mouse wheel events for zooming."""
@@ -174,10 +205,6 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
-        # self.cutoff_freqs = [50]  # Default cutoff frequency
-        # self.order = 5  # Default filter order
-        # self.cutoff_input_high = 50  # Default high cutoff frequency
-        # self.cutoff_input_low = 30  # Default low cutoff frequency
 
     def init_ui(self):
 
@@ -347,43 +374,20 @@ class MainWindow(QMainWindow):
 
         # init Gpr parser
         self.parser = GprParser(self.file_path)
-        #self.plot_radargram(self.parser.seismic_data, "Radargram (Seismic Section)")
-        self.update_radargram('zz')
-        # plot the radargram
-        # self.mpl_canvas.axes.imshow(self.parser.seismic_data, aspect='auto', cmap='seismic', extent=[0, self.parser.traces_num, self.parser.time_axis[-1], self.parser.time_axis[0]])
-        # #self.mpl_canvas.axes.colorbar(label="Amplitude")
-        # self.mpl_canvas.axes.set_title("Radargram (Seismic Section)")
-        # self.mpl_canvas.axes.set_xlabel("Trace number")
-        # self.mpl_canvas.axes.set_ylabel("Time (ns)")
-        # #   refresh canvas
-        # self.mpl_canvas.draw()
+        self.update_radargram('Radargram')
 
         # plot GPS coordinates
         lonX, latY = self.parser.trace_coordinates
         self.mpl_gps_canvas.plot_coordinates(lonX, latY)
-
+    
     def update_radargram(self, title):
-        '''
-        Plot data from parser on canvas
-        '''
         if self.parser is None:
             print('Parser not init')
             return
         else:
             seismic_data = self.parser.seismic_data
             time_axis = self.parser.time_axis
-            self.mpl_canvas.axes.clear()
-
-            #   need this to map traces and time axis
-            ext = [0, seismic_data.shape[1], time_axis[-1], time_axis[0]]
-
-            self.mpl_canvas.axes.imshow(seismic_data, aspect='auto', cmap='seismic', extent=ext)
-
-            self.mpl_canvas.axes.set_title(title)
-            self.mpl_canvas.axes.set_xlabel("Trace Number")
-            self.mpl_canvas.axes.set_ylabel("Time (ns)")
-            self.mpl_canvas.draw()
-            
+            self.mpl_canvas.update_radargram(seismic_data, time_axis, self.color_scheme, title)
 
 
     # def update_cutoff(self):
