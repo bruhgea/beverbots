@@ -58,7 +58,7 @@ class MplCanvas(FigureCanvasQTAgg):
         self.figure.canvas.mpl_connect('button_press_event', self._on_left_click)
         super(MplCanvas, self).__init__(self.figure)
 
-    def update_radargram(self, seismic_data, time_axis, color_scheme='seismic', title='Radargram'):
+    def update_radargram(self, seismic_data, time_axis, color_scheme, title='Radargram'):
         """
         Plot seismic data and update the colorbar.
         """
@@ -75,10 +75,11 @@ class MplCanvas(FigureCanvasQTAgg):
         if self.colorbar is not None:
             #   for some reason self.colorbar.remove() doesnt work
             self.colorbar.mappable = im
+            self.colorbar.update_ticks()
+            self.colorbar.update_normal(im)
         else:
             self.colorbar = self.figure.colorbar(im, ax=self.axes, orientation='vertical', label='Amplitude (s)')
 
-        self.colorbar.update_ticks()
         self.axes.set_title(title)
         self.axes.set_xlabel("Trace Number")
         self.axes.set_ylabel("Time (s)")
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.color_scheme = 'seismic'
         self.zoom_factor = 1.1  # Factor for zooming in and out
+        self.parser = None
 
     def init_ui(self):
 
@@ -352,7 +354,7 @@ class MainWindow(QMainWindow):
 
     def update_color_scheme(self, scheme):
         self.color_scheme = scheme
-        if self.parser.seismic_data is not None:
+        if self.parser is not None:
             self.update_radargram("Radargram with Color Scheme")
 
     def on_filter_change(self, text):
