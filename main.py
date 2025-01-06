@@ -1,43 +1,12 @@
-import gc
-
-import numpy as np
 import matplotlib
-
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from matplotlib.figure import Figure
-
-from scipy import ndimage as ndi
-from shutil import copyfile
-from skimage import exposure
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
-    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QGridLayout, QHBoxLayout, QSpinBox
-from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, \
-    QVBoxLayout, QWidget, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider, QDialog
-from PyQt5.QtGui import QPainter, QPen, QColor
-from PyQt5.QtCore import Qt, QPointF
-from obspy.io.segy.segy import SEGYFile
-import matplotlib.pyplot as plt
-from obspy import read
-from scipy.signal import butter, filtfilt
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel, QVBoxLayout, QPushButton, QFileDialog, QComboBox, QSpinBox, QHBoxLayout, QSlider, QDialog, QMessageBox, QLineEdit, QScrollArea, QScrollBar
+from PyQt5.QtCore import Qt
 import sys
-import struct
-from matplotlib.lines import Line2D
-import matplotlib.patches as patches
 import matplotlib.colors
-
-from scipy.signal import butter, lfilter
-from PyQt5.QtWidgets import QLineEdit
-from scipy.ndimage import gaussian_filter1d
-from PyQt5.QtWidgets import QScrollArea
-from PyQt5.QtWidgets import QScrollBar
-from PyQt5.QtWidgets import QMessageBox
-from scipy.signal import iirnotch, medfilt
-
-import psutil
-
 from gpr_parser import GprParser
 
 
@@ -246,7 +215,7 @@ class MainWindow(QMainWindow):
 
         # Color scheme selection
         self.color_scheme_box = QComboBox()
-        self.color_scheme_box.addItems(['seismic', 'viridis', 'plasma', 'inferno', 'gray', 'magma', 'cividis'])
+        self.color_scheme_box.addItems(['seismic', 'viridis', 'plasma', 'inferno', 'gray', 'magma', 'cividis', 'terrain'])
         self.color_scheme_box.currentTextChanged.connect(self.update_color_scheme)
 
         # Zoom in/out buttons
@@ -381,11 +350,9 @@ class MainWindow(QMainWindow):
         '''
         Open .sgy file and plot
         '''
-        print('file_btn_clicked event triggered!')
         self.file_path = QFileDialog.getOpenFileName(self, 'Open file', '', '*.sgy')[0]
         if (len(self.file_path) == 0):
             return
-        print(f'opened file {self.file_path}')
 
         # init Gpr parser
         self.parser = GprParser(self.file_path)
@@ -422,10 +389,7 @@ class MainWindow(QMainWindow):
         try:
             if self.parser is None:
                 QMessageBox.critical(self, "Error", "No data loaded to apply filter!")
-
                 return
-            else:
-                print(f"Data ready for filtering. Shape: {self.parser.seismic_data.shape}, fs: {self.parser.fs}")
 
             filter_type = self.filter_box.currentText().lower()
 
@@ -433,8 +397,6 @@ class MainWindow(QMainWindow):
 
             low = self.cutoff_input_low.text()
             high = self.cutoff_input_high.text()
-
-            print(f"Filter type: {filter_type}, low: {low}, high: {high}")
 
             if not low:
                 QMessageBox.critical(self, "Error", "Please set lowcut frequency")
@@ -449,7 +411,6 @@ class MainWindow(QMainWindow):
             high_cutoff = float(self.cutoff_input_high.text()) if filter_type == 'bandpass' else None
 
             if filter_type == 'none':
-                print("No filter selected")
                 self.update_radargram("Radargram (Original Data)")
                 return
 

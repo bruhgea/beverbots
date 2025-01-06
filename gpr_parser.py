@@ -5,8 +5,6 @@ from obspy import read
 from scipy.signal import butter, lfilter, filtfilt, medfilt, iirnotch
 from scipy.ndimage import gaussian_filter1d
 import struct
-import gc
-import psutil
 
 class GprParser():
     '''
@@ -42,7 +40,6 @@ class GprParser():
         # Create the time axis (assuming uniform sample interval)
         self.sample_interval = self.segy_stream[0].stats.delta  # sample interval in seconds
 
-        print(f'sample_interval = {self.sample_interval}')
         self.fs = self.segy_stream[0].stats.sampling_rate       # sample freq in Hz
 
         self.time_axis = np.linspace(0, (self.samples_num - 1) * self.sample_interval, self.samples_num)
@@ -64,14 +61,9 @@ class GprParser():
     #   gain
     def apply_gain(self, gain_db):
         exp_factor = 10**(gain_db/20)
-        #   DEBUG
-        print(f'apply_gain() called, gain_db = {gain_db}, exp_factor = {exp_factor}')
-        print(f'original first trace\n{self.seismic_data[0]}')
-
         self.seismic_data = np.sign(self.seismic_data) * (np.abs(self.seismic_data) ** exp_factor)
-        print(f'new first trace\n{self.seismic_data[0]}')
+
         
-    # TODO: configuration file for default filter settings
     class GprFilter:
         '''
         inner class for filtering data
@@ -128,9 +120,6 @@ class GprParser():
 
             if np.any(np.isnan(data)) or np.any(np.isinf(data)):
                 data = np.nan_to_num(data)
-
-            gc.collect()
-            print(f"Memory usage before filter: {psutil.Process().memory_info().rss / (1024 * 1024)} MB")
 
             b, a = self.notch_filter(freq, fs)
 
