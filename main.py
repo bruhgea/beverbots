@@ -56,7 +56,20 @@ class MplCanvas(FigureCanvasQTAgg):
         self.vertical_line = None
         #   connect event handlers
         self.figure.canvas.mpl_connect('button_press_event', self._on_left_click)
+        #   need these vals for proper color-amplitude mapping
+        self.cmap_min = 0
+        self.cmap_max = 20
         super(MplCanvas, self).__init__(self.figure)
+    
+
+    def normalize_colors(self, data_min, data_max, gain_db_min, gain_db_max):
+        '''
+        Normalize color map according to seismic data amplitudes in file and desired gain/attenuation range
+        '''
+        gain_min = 10**(gain_db_min / 20)
+        gain_max = 10**(gain_db_max / 20)
+        self.cmap_min = data_min #* gain_min
+        self.cmap_max = data_max #* gain_max
 
     def update_radargram(self, seismic_data, time_axis, color_scheme, title='Radargram'):
         """
@@ -70,7 +83,7 @@ class MplCanvas(FigureCanvasQTAgg):
 
         # Plot the seismic data with the specified colormap
         im = self.axes.imshow(seismic_data, aspect='auto', cmap=color_scheme, extent=ext, origin='upper')
-        im.set_clim(seismic_data.min(), seismic_data.max())
+        im.set_clim(self.cmap_min, self.cmap_max)
 
         if self.colorbar is not None:
             #   for some reason self.colorbar.remove() doesnt work
@@ -376,6 +389,8 @@ class MainWindow(QMainWindow):
 
         # init Gpr parser
         self.parser = GprParser(self.file_path)
+        # set appropriate colormap
+        self.mpl_canvas.normalize_colors(self.parser.seismic_data.min(), self.parser.seismic_data.max(), -20, 20)
         self.update_radargram('Radargram')
 
         # plot GPS coordinates
